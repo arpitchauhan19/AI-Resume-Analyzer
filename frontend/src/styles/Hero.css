@@ -1,0 +1,229 @@
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 88px 0 96px;
+}
+
+/* Soft ambient glow behind the hero */
+.hero::before {
+  content: "";
+  position: absolute;
+  top: -180px;
+  left: 50%;
+  width: 760px;
+  height: 760px;
+  transform: translateX(-50%);
+  background: radial-gradient(
+    circle,
+    rgba(139, 92, 246, 0.22) 0%,
+    rgba(99, 102, 241, 0.12) 35%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero__inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 56px;
+  align-items: center;
+}
+
+.hero__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--brand-600);
+  background: color-mix(in srgb, var(--brand-500) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-500) 24%, transparent);
+}
+
+.hero__badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brand-500);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-500) 25%, transparent);
+}
+
+.hero__title {
+  margin: 22px 0 0;
+  font-size: clamp(2.6rem, 5.2vw, 4rem);
+  line-height: 1.05;
+}
+
+.hero__title-accent {
+  background-image: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero__subtitle {
+  margin: 22px 0 0;
+  max-width: 540px;
+  font-size: 1.15rem;
+  color: var(--text);
+}
+
+.hero__actions {
+  margin-top: 34px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.hero__trust {
+  margin-top: 30px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.hero__trust-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- Visual: floating analysis dashboard mockup ---- */
+.hero__visual {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.hero__card {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+.hero__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.hero__card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.hero__card-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.hero__score {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--brand-500) 0% 87%,
+    color-mix(in srgb, var(--brand-500) 14%, transparent) 87% 100%
+  );
+}
+
+.hero__score-inner {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+}
+
+.hero__score-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text-strong);
+  line-height: 1;
+}
+
+.hero__score-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.hero__bars {
+  margin-top: 22px;
+  display: grid;
+  gap: 16px;
+}
+
+.hero__bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-strong);
+  margin-bottom: 7px;
+}
+
+.hero__bar-track {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.hero__bar-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background-image: var(--brand-gradient);
+  transform-origin: left;
+  animation: grow-bar 1.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes grow-bar {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@media (max-width: 940px) {
+  .hero__inner {
+    grid-template-columns: 1fr;
+    gap: 48px;
+    text-align: center;
+  }
+  .hero__subtitle {
+    margin-inline: auto;
+  }
+  .hero__actions,
+  .hero__trust {
+    justify-content: center;
+  }
+}

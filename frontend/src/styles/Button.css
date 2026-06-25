@@ -1,0 +1,83 @@
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 13px 26px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s ease, background-color 0.25s ease, border-color 0.25s ease,
+    color 0.25s ease;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--ring);
+}
+
+.btn:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+.btn__icon {
+  display: inline-flex;
+  transition: transform 0.25s ease;
+}
+
+/* Primary — gradient brand button */
+.btn--primary {
+  color: #ffffff;
+  background-image: var(--brand-gradient);
+  background-size: 160% 160%;
+  background-position: 0% 50%;
+  box-shadow: var(--shadow-md), 0 6px 20px -6px rgba(99, 102, 241, 0.6);
+}
+
+.btn--primary:hover {
+  transform: translateY(-2px);
+  background-position: 100% 50%;
+  box-shadow: var(--shadow-lg), 0 12px 28px -8px rgba(99, 102, 241, 0.65);
+}
+
+.btn--primary:hover .btn__icon {
+  transform: translateY(-1px) scale(1.05);
+}
+
+/* Secondary — soft surface button */
+.btn--secondary {
+  color: var(--text-strong);
+  background: var(--surface);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn--secondary:hover {
+  transform: translateY(-2px);
+  border-color: var(--brand-500);
+  box-shadow: var(--shadow-md);
+}
+
+.btn--secondary:hover .btn__icon {
+  transform: translateX(2px);
+}
+
+/* Ghost — minimal text button */
+.btn--ghost {
+  color: var(--text-strong);
+  background: transparent;
+  padding: 10px 16px;
+}
+
+.btn--ghost:hover {
+  background: var(--bg-soft);
+}
+
+.btn--block {
+  width: 100%;
+}

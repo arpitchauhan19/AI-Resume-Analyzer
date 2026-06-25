@@ -1,0 +1,160 @@
+/* ============================================================
+   Global design tokens + reset for the AI Resume Analyzer.
+   Light is the default theme. Dark is enabled by setting
+   data-theme="dark" on <html> (handled by useTheme).
+   ============================================================ */
+
+:root {
+  /* Brand */
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
+  --brand-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+
+  /* Light surfaces */
+  --bg: #ffffff;
+  --bg-soft: #f7f8fb;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --border: #e8e9ef;
+  --border-strong: #d6d8e2;
+
+  /* Light text */
+  --text: #5b6072;
+  --text-strong: #0c0e16;
+  --text-muted: #8b90a3;
+
+  /* Effects */
+  --shadow-sm: 0 1px 2px rgba(15, 18, 38, 0.06);
+  --shadow-md: 0 8px 24px -8px rgba(15, 18, 38, 0.12);
+  --shadow-lg: 0 24px 60px -20px rgba(15, 18, 38, 0.22);
+  --ring: rgba(99, 102, 241, 0.4);
+
+  /* Layout */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+  --container: 1180px;
+  --nav-height: 72px;
+
+  /* Type */
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --bg: #0a0b12;
+  --bg-soft: #11131d;
+  --bg-elevated: #151826;
+  --surface: #141726;
+  --border: #232739;
+  --border-strong: #2f3450;
+
+  --text: #a7adc4;
+  --text-strong: #f5f6fb;
+  --text-muted: #767c95;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 10px 30px -10px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 30px 70px -25px rgba(0, 0, 0, 0.7);
+  --ring: rgba(139, 92, 246, 0.5);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--text-strong);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Shared layout helper */
+.container {
+  width: 100%;
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.section {
+  padding: 96px 0;
+}
+
+@media (max-width: 768px) {
+  .section {
+    padding: 64px 0;
+  }
+}
+
+/* Reusable entrance animation */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-up {
+  animation: fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
