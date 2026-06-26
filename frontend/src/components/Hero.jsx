@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import "../styles/Hero.css";
 import Button from "./Button";
 import { CheckIcon, PlayIcon, SparkleIcon, UploadIcon } from "./icons";
@@ -40,8 +41,8 @@ function Hero() {
             style={{ animationDelay: "180ms" }}
           >
             <Button
-              as="a"
-              href="#upload"
+              as={Link}
+              to="/upload"
               icon={<UploadIcon width={19} height={19} />}
             >
               Upload Resume

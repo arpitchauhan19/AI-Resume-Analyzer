@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import "../styles/Navbar.css";
 import Button from "./Button";
 import ThemeToggle from "./ThemeToggle";
@@ -38,8 +39,8 @@ function Navbar({ theme, onToggleTheme }) {
         <div className="navbar__actions">
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           <Button
-            as="a"
-            href="#upload"
+            as={Link}
+            to="/upload"
             className="navbar__cta"
             icon={<UploadIcon width={18} height={18} />}
           >

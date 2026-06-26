@@ -116,3 +116,107 @@ export function GithubIcon(props) {
     </svg>
   );
 }
+
+/* ---- Icons added for the upload / loading / dashboard flow ---- */
+
+export function CloseIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M18 6L6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+export function TrashIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M4 7h16" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M5 7l1 13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-13" />
+      <path d="M9 7V4h6v3" />
+    </svg>
+  );
+}
+
+export function ArrowRightIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M5 12h14" />
+      <path d="M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+export function ArrowLeftIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M19 12H5" />
+      <path d="M11 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+export function HomeIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M3 11l9-8 9 8" />
+      <path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10" />
+      <path d="M9 21v-6h6v6" />
+    </svg>
+  );
+}
+
+export function FileIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+    </svg>
+  );
+}
+
+export function AlertIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+    </svg>
+  );
+}
+
+export function TrendUpIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M3 17l6-6 4 4 7-7" />
+      <path d="M17 8h4v4" />
+    </svg>
+  );
+}
+
+export function LayersIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M12 3l9 5-9 5-9-5 9-5z" />
+      <path d="M3 13l9 5 9-5" />
+    </svg>
+  );
+}
+
+export function StarIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9 6.8 19l1-5.8L3.5 9.2l5.9-.9L12 3z" />
+    </svg>
+  );
+}
+
+export function KeyIcon(props) {
+  return (
+    <svg {...base} {...props} aria-hidden="true">
+      <circle cx="8" cy="8" r="4" />
+      <path d="M11 11l8 8" />
+      <path d="M16 16l2-2M18 18l2-2" />
+    </svg>
+  );
+}
