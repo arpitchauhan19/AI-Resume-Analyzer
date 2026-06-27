@@ -20,6 +20,9 @@ const env = {
   corsOrigins: parseOrigins(process.env.CORS_ORIGIN || "http://localhost:5173"),
   maxUploadSize: Number(process.env.MAX_UPLOAD_SIZE) || 5 * 1024 * 1024,
   uploadDir: path.resolve(backendRoot, process.env.UPLOAD_DIR || "src/uploads"),
+  // Python FastAPI Resume Parser service.
+  parserServiceUrl: (process.env.PARSER_SERVICE_URL || "http://localhost:8000").replace(/\/+$/, ""),
+  parserTimeoutMs: Number(process.env.PARSER_TIMEOUT_MS) || 30000,
 };
 
 module.exports = env;
