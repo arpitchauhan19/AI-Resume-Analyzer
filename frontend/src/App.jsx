@@ -7,9 +7,10 @@ import Dashboard from "./pages/Dashboard";
 /*
  * Application route map.
  *  /          → Landing page (untouched)
- *  /upload    → Resume upload flow
- *  /loading   → Fake analysis animation
- *  /dashboard → Results dashboard (fake data)
+ *  /upload    → Resume upload flow (uploads to POST /api/upload)
+ *  /loading   → Standalone analysis animation (no longer in the main flow;
+ *               real progress is now shown inline on the upload page)
+ *  /dashboard → Results dashboard (renders the real parsed resume)
  */
 function App() {
   return (
