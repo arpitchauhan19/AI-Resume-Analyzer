@@ -35,6 +35,31 @@ export async function uploadResume(file, onProgress) {
 }
 
 /**
+ * Run the ATS analysis for a parsed resume against a job description.
+ *
+ * Calls the Express ATS engine (`POST /api/ats/analyze`) which returns the
+ * real ATS score, matched/missing keywords and suggestions.
+ *
+ * @param {object} resume          The parsed resume object (from uploadResume).
+ * @param {string} jobDescription  Raw job description text.
+ * @returns {Promise<{
+ *   atsScore: number,
+ *   skillMatch: number,
+ *   matchedKeywords: string[],
+ *   missingKeywords: string[],
+ *   resumeCompleteness: number,
+ *   suggestions: string[]
+ * }>}
+ */
+export async function analyzeAts(resume, jobDescription) {
+  const { data } = await api.post("/api/ats/analyze", {
+    resume,
+    jobDescription,
+  });
+  return data;
+}
+
+/**
  * Turn any axios/backend error into a single human-readable message.
  * The backend's error handler responds with `{ message }` (or `{ error }`),
  * so we surface that when available and fall back to network-level hints.

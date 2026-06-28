@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import "../styles/ui.css";
 import "../styles/Dashboard.css";
@@ -5,6 +6,9 @@ import AppHeader from "../components/AppHeader";
 import Card from "../components/Card";
 import StatCard from "../components/StatCard";
 import Button from "../components/Button";
+import CircularScore from "../components/CircularScore";
+import ProgressBar from "../components/ProgressBar";
+import { analyzeAts, getErrorMessage } from "../lib/api";
 import {
   DocumentIcon,
   LayersIcon,
@@ -13,6 +17,10 @@ import {
   BulbIcon,
   ArrowLeftIcon,
   UploadIcon,
+  KeyIcon,
+  CheckIcon,
+  CloseIcon,
+  AlertIcon,
 } from "../components/icons";
 
 /* Small inline placeholder shown whenever a section has no data. */
@@ -47,6 +55,163 @@ function ContactRow({ label, value }) {
         <NotFound />
       )}
     </div>
+  );
+}
+
+/* Renders matched/missing keywords as colour-coded skill tags. */
+function KeywordTags({ keywords, missing = false }) {
+  if (!keywords || keywords.length === 0) {
+    return <NotFound label={missing ? "No gaps found" : "No matches yet"} />;
+  }
+  return (
+    <div className="skill-tags">
+      {keywords.map((kw, i) => (
+        <span
+          className={`skill-tag ${missing ? "skill-tag--missing" : ""}`.trim()}
+          key={`${kw}-${i}`}
+        >
+          <span className="skill-tag__dot" />
+          {kw}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/*
+ * ATS Match panel: lets the user paste a job description, sends the parsed
+ * resume + JD to the Express ATS engine (POST /api/ats/analyze), and renders
+ * the real score, keyword breakdown and suggestions.
+ */
+function AtsMatch({ resume }) {
+  const [jobDescription, setJobDescription] = useState("");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const canAnalyze = jobDescription.trim().length > 0 && !loading;
+
+  async function handleAnalyze() {
+    if (!canAnalyze) return;
+    setLoading(true);
+    setError("");
+    try {
+      const data = await analyzeAts(resume, jobDescription);
+      setResult(data);
+    } catch (err) {
+      setError(getErrorMessage(err));
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      {/* Job description input */}
+      <Card
+        className="col-12"
+        title="ATS Match"
+        icon={<TargetIcon width={20} height={20} />}
+      >
+        <p className="ats-intro">
+          Paste a job description to score your resume against it and reveal the
+          keywords an ATS would look for.
+        </p>
+        <textarea
+          className="ats-textarea"
+          rows={6}
+          placeholder="Paste the job description here…"
+          value={jobDescription}
+          onChange={(e) => setJobDescription(e.target.value)}
+        />
+        <div className="ats-actions">
+          <Button
+            onClick={handleAnalyze}
+            disabled={!canAnalyze}
+            icon={<TargetIcon width={18} height={18} />}
+          >
+            {loading ? "Analyzing…" : "Analyze ATS Match"}
+          </Button>
+        </div>
+
+        {error && (
+          <div className="ats-error" role="alert">
+            <AlertIcon width={18} height={18} />
+            <span>{error}</span>
+          </div>
+        )}
+      </Card>
+
+      {/* Results — only once we have a real response */}
+      {result && (
+        <>
+          <Card
+            className="col-4 ats-card"
+            title="ATS Score"
+            icon={<StarIcon width={20} height={20} />}
+          >
+            <div className="ats-card__ring">
+              <CircularScore value={result.atsScore} caption="ATS Score" />
+            </div>
+            <div className="bar-stack" style={{ width: "100%" }}>
+              <ProgressBar
+                label="Skill Match"
+                value={result.skillMatch}
+                variant={result.skillMatch < 50 ? "warn" : "brand"}
+              />
+              {typeof result.resumeCompleteness === "number" && (
+                <ProgressBar
+                  label="Resume Completeness"
+                  value={result.resumeCompleteness}
+                  variant={result.resumeCompleteness < 50 ? "warn" : "brand"}
+                  delay={120}
+                />
+              )}
+            </div>
+          </Card>
+
+          <Card
+            className="col-8"
+            title="Matched Keywords"
+            icon={<CheckIcon width={20} height={20} />}
+          >
+            <KeywordTags keywords={result.matchedKeywords} />
+          </Card>
+
+          <Card
+            className="col-6"
+            title="Missing Keywords"
+            icon={<CloseIcon width={20} height={20} />}
+          >
+            <KeywordTags keywords={result.missingKeywords} missing />
+          </Card>
+
+          <Card
+            className="col-6"
+            title="Suggestions"
+            icon={<KeyIcon width={20} height={20} />}
+          >
+            {result.suggestions && result.suggestions.length > 0 ? (
+              <ul className="tip-list">
+                {result.suggestions.map((tip, i) => (
+                  <li className="tip" key={`${i}-${tip.slice(0, 12)}`}>
+                    <span className="tip__icon">
+                      <BulbIcon width={18} height={18} />
+                    </span>
+                    <div>
+                      <p className="tip__text">{tip}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <NotFound label="No suggestions" />
+            )}
+          </Card>
+        </>
+      )}
+    </>
   );
 }
 
@@ -153,6 +318,9 @@ function Dashboard() {
 
           {/* Main grid */}
           <div className="dashboard__grid">
+            {/* ATS match: job description input + real score & keywords */}
+            <AtsMatch resume={resume} />
+
             {/* Contact details */}
             <Card
               className="col-4"

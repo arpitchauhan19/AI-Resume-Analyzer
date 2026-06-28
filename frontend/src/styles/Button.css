@@ -25,6 +25,14 @@
   transform: translateY(1px) scale(0.98);
 }
 
+.btn:disabled,
+.btn[disabled] {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+  box-shadow: var(--shadow-sm);
+}
+
 .btn__icon {
   display: inline-flex;
   transition: transform 0.25s ease;
