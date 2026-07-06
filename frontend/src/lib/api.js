@@ -1,14 +1,29 @@
 import axios from "axios";
 
 /*
- * Central axios instance for talking to the Node/Express backend.
+ * Base URL for the Node/Express backend.
  *
- * The base URL is configurable via the Vite env var `VITE_API_URL` so the
- * same build works in dev (Node on :5000) and in production behind a proxy.
- * It defaults to the local backend the project ships with.
+ * Resolution rules (Vite inlines env vars at BUILD time):
+ *   - Configured explicitly via `VITE_API_URL` — recommended for every real
+ *     deployment (dev, staging, production).
+ *   - Local development (`vite dev`) falls back to the backend the project
+ *     ships with on :5000 so `npm run dev` works with zero configuration.
+ *   - In a PRODUCTION build the localhost fallback is intentionally removed:
+ *     if `VITE_API_URL` was not provided at build time we fail loudly instead
+ *     of silently shipping a bundle that points at the end-user's own machine.
  */
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
+
+if (!configuredApiUrl && import.meta.env.PROD) {
+  throw new Error(
+    "[config] VITE_API_URL is not set. Define it at build time " +
+      "(e.g. VITE_API_URL=https://api.example.com npm run build) so the " +
+      "production build targets your deployed backend instead of localhost."
+  );
+}
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:5000",
+  baseURL: configuredApiUrl || "http://localhost:5000",
 });
 
 /**

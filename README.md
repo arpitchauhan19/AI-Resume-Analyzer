@@ -261,22 +261,36 @@ Response:
 
 Backend (`backend/.env` — see `backend/.env.example`):
 
-| Variable             | Default                                          | Description                                   |
+| Variable             | Default (development only)                       | Description                                   |
 | -------------------- | ------------------------------------------------ | --------------------------------------------- |
 | `PORT`               | `5000`                                           | Port the Express server listens on            |
 | `NODE_ENV`           | `development`                                    | `development` \| `production`                 |
-| `MONGODB_URI`        | `mongodb://127.0.0.1:27017/ai-resume-analyzer`   | MongoDB connection string (optional)          |
-| `CORS_ORIGIN`        | `http://localhost:5173`                          | Comma-separated allowed origins               |
+| `MONGODB_URI`        | `mongodb://127.0.0.1:27017/ai-resume-analyzer`   | MongoDB connection string (optional/best-effort) |
+| `CORS_ORIGIN`        | `http://localhost:5173`                          | Comma-separated allowed origins — **required in production** |
 | `MAX_UPLOAD_SIZE`    | `5242880` (5 MB)                                 | Max upload size in bytes                       |
 | `UPLOAD_DIR`         | `src/uploads`                                    | Where uploaded files are stored                |
-| `PARSER_SERVICE_URL` | `http://localhost:8000`                          | Base URL of the Python parser service          |
-| `PARSER_TIMEOUT_MS`  | `30000`                                          | Timeout for parser requests (ms)               |
+| `PARSER_SERVICE_URL` | `http://localhost:8000`                          | Base URL of the Python parser service — **required in production** |
+| `PARSER_TIMEOUT_MS`  | `30000`                                          | Timeout for parser requests (ms); positive number |
 
-Frontend (`frontend/.env`, optional):
+Frontend (`frontend/.env` — see `frontend/.env.example`):
 
-| Variable        | Default                  | Description                  |
-| --------------- | ------------------------ | ---------------------------- |
-| `VITE_API_URL`  | `http://localhost:5000`  | Base URL of the Express API  |
+| Variable        | Default (development only) | Description                                              |
+| --------------- | -------------------------- | -------------------------------------------------------- |
+| `VITE_API_URL`  | `http://localhost:5000`    | Base URL of the Express API — **required for production builds** |
+
+### Production deployment
+
+The localhost defaults above exist purely for local development. They are
+**not** used when the services run in production:
+
+- **Backend** — when `NODE_ENV=production`, the server validates its config on
+  startup and **refuses to boot** with a clear error unless `PARSER_SERVICE_URL`
+  and `CORS_ORIGIN` are set explicitly. This stops a deployed backend from
+  silently calling `localhost` services that don't exist.
+- **Frontend** — Vite inlines `VITE_API_URL` at **build time**, so it must be
+  provided before `npm run build` (e.g. `VITE_API_URL=https://api.example.com npm run build`).
+  A production build with `VITE_API_URL` unset fails loudly at runtime instead
+  of shipping a bundle hard-coded to `http://localhost:5000`.
 
 ---
 

@@ -32,14 +32,23 @@ persistence is skipped.
 
 See `.env.example`. Key values:
 
-| Variable          | Default                                          | Description                              |
-| ----------------- | ------------------------------------------------ | ---------------------------------------- |
-| `PORT`            | `5000`                                           | HTTP port                                |
-| `NODE_ENV`        | `development`                                    | `development` or `production`            |
-| `MONGODB_URI`     | `mongodb://127.0.0.1:27017/ai-resume-analyzer`   | MongoDB connection string                |
-| `CORS_ORIGIN`     | `http://localhost:5173`                          | Comma-separated allowed origins          |
-| `MAX_UPLOAD_SIZE` | `5242880` (5 MB)                                 | Max upload size in bytes                 |
-| `UPLOAD_DIR`      | `src/uploads`                                    | Where uploaded files are stored on disk  |
+| Variable             | Default (development only)                       | Description                                        |
+| -------------------- | ------------------------------------------------ | -------------------------------------------------- |
+| `PORT`               | `5000`                                           | HTTP port                                          |
+| `NODE_ENV`           | `development`                                    | `development` or `production`                      |
+| `MONGODB_URI`        | `mongodb://127.0.0.1:27017/ai-resume-analyzer`   | MongoDB connection string (optional/best-effort)   |
+| `CORS_ORIGIN`        | `http://localhost:5173`                          | Comma-separated allowed origins — **required in production** |
+| `MAX_UPLOAD_SIZE`    | `5242880` (5 MB)                                 | Max upload size in bytes                           |
+| `UPLOAD_DIR`         | `src/uploads`                                    | Where uploaded files are stored on disk            |
+| `PARSER_SERVICE_URL` | `http://localhost:8000`                          | Base URL of the FastAPI parser — **required in production** |
+| `PARSER_TIMEOUT_MS`  | `30000`                                          | Parser request timeout (ms); positive number       |
+
+> **Production configuration.** The localhost defaults above are applied **only**
+> when `NODE_ENV` is not `production`. When `NODE_ENV=production`, the server
+> validates its configuration on startup and **refuses to boot** (with a clear
+> error listing what's missing) unless `PARSER_SERVICE_URL` and `CORS_ORIGIN`
+> are set explicitly. This prevents a deployed backend from silently talking to
+> `localhost` services that don't exist in the target environment.
 
 ## API
 
