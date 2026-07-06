@@ -55,7 +55,7 @@ Liveness probe.
 
 ### `POST /api/upload`
 
-Uploads a single **PDF** or **DOCX** file.
+Uploads a single **PDF** file.
 
 - Content type: `multipart/form-data`
 - Form field name: `resume`
@@ -76,7 +76,7 @@ Uploads a single **PDF** or **DOCX** file.
 ```json
 {
   "success": false,
-  "message": "Only PDF or DOCX files are allowed"
+  "message": "Only PDF files are allowed"
 }
 ```
 
@@ -108,6 +108,6 @@ backend/
 ## Notes
 
 - Resume parsing, ATS scoring, and AI features are intentionally out of scope.
-- Only PDF/DOCX are accepted; other files are rejected before being written.
+- Only PDF files are accepted; other files are rejected before being written.
 - Uploaded files are stored under `src/uploads/` with collision-free names.
 ```

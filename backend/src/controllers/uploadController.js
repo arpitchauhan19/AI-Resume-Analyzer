@@ -4,7 +4,7 @@ const { parseResume } = require("../services/parserService");
 
 /**
  * POST /api/upload
- * Receives a single PDF/DOCX file (already validated + stored by multer),
+ * Receives a single PDF file (already validated + stored by multer),
  * records its metadata, forwards the file to the Python FastAPI parser
  * service, and returns the structured resume JSON to the frontend.
  */

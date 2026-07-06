@@ -14,7 +14,7 @@ const api = axios.create({
 /**
  * Upload a resume file to the backend parser.
  *
- * @param {File} file               The PDF/DOCX selected by the user.
+ * @param {File} file               The PDF selected by the user.
  * @param {(percent:number)=>void} [onProgress]  Upload progress callback (0–100).
  * @returns {Promise<object>}        The backend payload:
  *   `{ success, filename, size, mimetype, resume: { contact, skills, ... } }`

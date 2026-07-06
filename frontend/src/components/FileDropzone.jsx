@@ -3,12 +3,11 @@ import "../styles/Upload.css";
 import Button from "./Button";
 import { UploadIcon, AlertIcon } from "./icons";
 
-/* Accepted resume formats (PDF + DOCX only). */
+/* Accepted resume format (PDF only). */
 const ACCEPTED = {
   "application/pdf": ".pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
 };
-const ACCEPTED_EXT = [".pdf", ".docx"];
+const ACCEPTED_EXT = [".pdf"];
 const MAX_SIZE_MB = 5;
 
 function isAccepted(file) {
@@ -36,7 +35,7 @@ function FileDropzone({ onSelect }) {
     if (!file) return;
 
     if (!isAccepted(file)) {
-      setError("Unsupported format. Please upload a PDF or DOCX file.");
+      setError("Unsupported format. Please upload a PDF file.");
       return;
     }
     if (file.size > MAX_SIZE_MB * 1024 * 1024) {
@@ -97,7 +96,7 @@ function FileDropzone({ onSelect }) {
         <p className="dropzone__title">
           {dragging ? "Drop your resume here" : "Drag & drop your resume"}
         </p>
-        <p className="dropzone__hint">PDF or DOCX · up to {MAX_SIZE_MB} MB</p>
+        <p className="dropzone__hint">PDF · up to {MAX_SIZE_MB} MB</p>
 
         <span className="dropzone__divider">OR</span>
 
@@ -114,14 +113,13 @@ function FileDropzone({ onSelect }) {
 
         <div className="dropzone__meta">
           <span className="tag tag--brand">.PDF</span>
-          <span className="tag tag--brand">.DOCX</span>
         </div>
 
         <input
           ref={inputRef}
           className="dropzone__input"
           type="file"
-          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          accept=".pdf,application/pdf"
           onChange={handleChange}
         />
       </div>

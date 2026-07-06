@@ -8,13 +8,12 @@ const ApiError = require("./ApiError");
 // Ensure the upload directory exists before multer tries to write to it.
 fs.mkdirSync(env.uploadDir, { recursive: true });
 
-// Accepted resume formats: PDF and DOCX.
+// Accepted resume format: PDF only (the parser service supports PDF only).
 const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
 
-const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx"]);
+const ALLOWED_EXTENSIONS = new Set([".pdf"]);
 
 // Store files on local disk with a collision-free, sanitized name.
 const storage = multer.diskStorage({
@@ -32,7 +31,7 @@ const storage = multer.diskStorage({
   },
 });
 
-// Reject anything that is not a PDF/DOCX before it is written to disk.
+// Reject anything that is not a PDF before it is written to disk.
 function fileFilter(req, file, cb) {
   const ext = path.extname(file.originalname).toLowerCase();
   const mimeOk = ALLOWED_MIME_TYPES.has(file.mimetype);
@@ -42,7 +41,7 @@ function fileFilter(req, file, cb) {
     return cb(null, true);
   }
 
-  return cb(new ApiError(400, "Only PDF or DOCX files are allowed"));
+  return cb(new ApiError(400, "Only PDF files are allowed"));
 }
 
 const upload = multer({

@@ -11,7 +11,7 @@ import { uploadResume, getErrorMessage } from "../lib/api";
 
 /*
  * Resume upload page.
- * Lets the user pick a PDF/DOCX via drag & drop or file browser, previews
+ * Lets the user pick a PDF via drag & drop or file browser, previews
  * the selection, and — on "Analyze" — uploads it to the backend parser
  * (POST /api/upload). While the request is in flight we show real upload
  * progress; on success we forward the parsed resume JSON to the dashboard,

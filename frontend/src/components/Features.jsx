@@ -12,7 +12,7 @@ const FEATURES = [
   {
     icon: <DocumentIcon width={24} height={24} />,
     title: "Resume Parsing",
-    text: "Automatically extract skills, experience and education from any PDF or DOCX file.",
+    text: "Automatically extract skills, experience and education from any PDF resume.",
   },
   {
     icon: <BulbIcon width={24} height={24} />,
