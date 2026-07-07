@@ -102,6 +102,13 @@ const STOPWORDS = new Set([
   "cross", "functional", "mindset", "passion", "eager", "learn", "learning",
   "great", "leadership", "mentor", "ownership", "deadline", "agile", "scrum",
   "pipeline", "set", "setup", "paced", "driven", "end",
+  // Generic role/actor nouns and broad IT verbs/nouns that describe activity
+  // rather than a concrete technology. (Plurals fold to these singular base
+  // forms via `stem`: users->user, engineers->engineer, interfaces->interface,
+  // configurations->configuration; deployment->deploy via LEMMA_MAP.)
+  "user", "engineer", "engineering", "cloud", "configure", "configured",
+  "configuring", "configuration", "deploy", "interface", "administrator",
+  "admin", "operation", "support", "maintainer", "provision", "provisioning",
   // Stray CI/CD fragments (the joined "CI/CD" is canonicalized to `cicd`; these
   // guard against a lone "ci"/"cd" surviving as noise).
   "ci", "cd",
