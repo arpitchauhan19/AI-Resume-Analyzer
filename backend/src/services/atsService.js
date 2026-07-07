@@ -79,6 +79,32 @@ const STOPWORDS = new Set([
   "environment", "tool", "technology", "feature", "feature-rich", "based",
   "help", "make", "made", "get", "got", "new", "existing", "various",
   "well", "high", "quality", "scalable", "efficient", "robust", "modern",
+  // Generic *technical* nouns/verbs that are too broad to be ATS keywords.
+  // (Plurals/inflections fold to these base forms via `stem`/`LEMMA_MAP`:
+  //  algorithms->algorithm, problems->problem, structures->structure,
+  //  integration/integrated->integrate.)
+  "algorithm", "problem", "responsive", "database", "structure", "integrate",
+  "maintainable", "maintain", "maintainability", "performance", "performant",
+  "optimize", "optimization", "optimized", "optimizing", "web", "write",
+  "writing", "wrote", "written", "clean", "cleaner", "logic", "concept",
+  "fundamental", "practice", "pattern", "architecture", "architect",
+  "scalability", "reliability", "reliable", "reusable",
+  // Soft-skills, generic actions and other low-value English that describe
+  // *what you do* rather than a concrete technology. (Inflections that `stem`
+  // does not fold, e.g. -ing/-ion forms, are listed explicitly.)
+  "authentication", "authorization", "authenticate", "collaborate",
+  "collaboration", "collaborative", "collaborating", "communicate",
+  "communication", "communicating", "solve", "solving", "solved", "implement",
+  "implementation", "implementing", "implemented", "schema", "create",
+  "creating", "created", "creative", "creativity", "working", "worked",
+  "maintenance", "manage", "management", "managing", "deliver", "delivery",
+  "deliverable", "responsibilities", "detail", "oriented", "fast", "paced",
+  "cross", "functional", "mindset", "passion", "eager", "learn", "learning",
+  "great", "leadership", "mentor", "ownership", "deadline", "agile", "scrum",
+  "pipeline", "set", "setup", "paced", "driven", "end",
+  // Stray CI/CD fragments (the joined "CI/CD" is canonicalized to `cicd`; these
+  // guard against a lone "ci"/"cd" surviving as noise).
+  "ci", "cd",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -130,6 +156,31 @@ function normalize(value) {
  *    stay distinct tokens and never match each other.
  */
 const CANONICAL_RULES = [
+  // --- Stack acronyms expanded to their constituent technologies FIRST, so the
+  //     individual names then flow through the rest of the pipeline normally.
+  [/\bmern\b/gi, " mongodb express react node "], // MERN -> MongoDB Express React Node
+
+  // --- "Continuous Integration/Delivery/Deployment" phrasing IS CI/CD.
+  //     Each occurrence folds to `cicd`; a paired phrase ("... and ...")
+  //     simply yields `cicd` twice and de-dupes during keyword counting.
+  [/\bcontinuous\s+(?:integration|delivery|deployment)\b/gi, " cicd "],
+
+  // --- Common CI/CD tools collapse to a single canonical token each (so their
+  //     multi-word names never split), and each IMPLIES `cicd` on the resume
+  //     side (see IMPLIED_TOKENS) so listing the tool satisfies a CI/CD need.
+  //     These run BEFORE the generic CI/CD rule so "GitLab CI/CD" is captured
+  //     whole rather than leaving a stray "cd".
+  [/\btravis\s*ci\b/gi, " travisci "], //             Travis CI / TravisCI
+  [/\bcircle\s*ci\b/gi, " circleci "], //             Circle CI / CircleCI
+  [/\bgithub\s*actions?\b/gi, " githubactions "], //  GitHub Action(s)
+  [/\bgitlab\s*ci(?:\s*[\/\-]\s*cd)?\b/gi, " gitlabci "], // GitLab CI / GitLab CI/CD
+  [/\bazure\s*pipelines?\b/gi, " azurepipelines "], // Azure Pipelines
+
+  // --- CI/CD is ONE technology. Collapse "CI/CD", "CI-CD", "CI / CD" (and the
+  //     already-joined "cicd") into a single token so it is never split into
+  //     the meaningless fragments "ci" and "cd".
+  [/\bci\s*[\/\-]\s*cd\b/gi, " cicd "],
+
   // --- Multi-word terms -> single canonical token (also folds the "s" plural).
   [/\brest(?:ful)?\s*api(?:s)?\b/gi, " restapi "], // REST API / REST APIs / RESTful API
   [/\bmongo\s*db\b/gi, " mongodb "], //              Mongo DB / MongoDB
@@ -153,6 +204,11 @@ const CANONICAL_RULES = [
   // --- Versioned front-end tokens -> their base language (HTML5 -> html, CSS3 -> css).
   [/\bhtml\s*\d+\b/gi, " html "],
   [/\bcss\s*\d+\b/gi, " css "],
+
+  // --- ECMAScript spec versions (ES6, ES6+, ES2015, ESNext) are not skills of
+  //     their own — drop them entirely so they never surface as ATS keywords.
+  [/\bes(?:20)?\d+\+?/gi, " "],
+  [/\besnext\b/gi, " "],
 ];
 
 /**
@@ -194,7 +250,8 @@ const PROTECTED_TERMS = new Set([
   "nltk", "opencv", "cpp", "csharp", "redux", "angular", "vue", "svelte",
   "django", "flask", "spring", "kafka", "rabbitmq", "elasticsearch", "grpc",
   "terraform", "jenkins", "azure", "gcp", "linux", "bash", "matlab", "kotlin",
-  "scala", "swift", "php", "ruby", "rust", "golang", "devops",
+  "scala", "swift", "php", "ruby", "rust", "golang", "devops", "cicd",
+  "travisci", "circleci", "githubactions", "gitlabci", "azurepipelines",
 ]);
 
 /**
@@ -263,6 +320,46 @@ function stem(token) {
 }
 
 /**
+ * Canonical tokens that *imply* one or more broader/generic tokens on the
+ * RESUME side. A résumé that demonstrates the specific skill should therefore
+ * also satisfy a job-description keyword for the broader term.
+ *
+ * e.g. a résumé listing "REST API"/"REST APIs" (canonical `restapi`) also
+ * satisfies a JD keyword `api`, so `api` never lands in Missing Keywords.
+ *
+ * This is applied ONLY when building the résumé/skills text (never to JD
+ * keyword extraction), so it can only ever *add* matches — it does not
+ * introduce a generic `api` keyword of its own.
+ */
+const IMPLIED_TOKENS = new Map([
+  ["restapi", ["api"]],
+  // A resume that lists any mainstream CI/CD tool demonstrates CI/CD, so it
+  // satisfies a JD "CI/CD" keyword and CI/CD never lands in Missing.
+  ["jenkins", ["cicd"]],
+  ["travisci", ["cicd"]],
+  ["circleci", ["cicd"]],
+  ["githubactions", ["cicd"]],
+  ["gitlabci", ["cicd"]],
+  ["azurepipelines", ["cicd"]],
+]);
+
+/**
+ * Given a list of résumé/skill tokens, append any tokens they imply
+ * (see {@link IMPLIED_TOKENS}). Order is preserved and originals are kept.
+ *
+ * @param {string[]} tokens
+ * @returns {string[]}
+ */
+function expandImplied(tokens) {
+  const out = [...tokens];
+  for (const token of tokens) {
+    const implied = IMPLIED_TOKENS.get(token);
+    if (implied) out.push(...implied);
+  }
+  return out;
+}
+
+/**
  * Split arbitrary text into a list of normalized, meaningful tokens.
  * Drops stopwords, pure numbers and very short noise tokens.
  *
@@ -284,6 +381,16 @@ function tokenize(text) {
       if (token.length < 2) return false; // drop single chars / empties
       if (STOPWORDS.has(token)) return false;
       if (/^\d+$/.test(token)) return false; // drop bare numbers
+      // Hyphenated filler compounds ("cross-functional", "problem-solving",
+      // "fast-paced") whose every part is itself a stopword carry no signal.
+      // A real hyphenated tech term (e.g. "scikit-learn") keeps at least one
+      // non-stopword part and therefore survives.
+      if (token.includes("-")) {
+        const parts = token.split("-").filter(Boolean);
+        if (parts.length > 1 && parts.every((p) => STOPWORDS.has(p) || p.length < 2)) {
+          return false;
+        }
+      }
       return true;
     });
 }
@@ -315,7 +422,8 @@ function buildResumeText(resume) {
   // -> stem -> stopword filter) and rejoin as space-separated canonical tokens.
   // Using the identical normalization on both sides is what lets a resume's
   // "APIs"/"projects"/"React.js" satisfy a JD keyword "api"/"project"/"react".
-  return tokenize(parts.filter(Boolean).join(" ")).join(" ");
+  // `expandImplied` additionally lets "REST API" satisfy a JD "api" keyword.
+  return expandImplied(tokenize(parts.filter(Boolean).join(" "))).join(" ");
 }
 
 /** Coerce a value into an array of strings (defensive against bad input). */
@@ -396,8 +504,9 @@ function matchKeywords(keywords, resumeText) {
 function computeSkillMatch(resumeSkills, keywords) {
   // Normalize the explicit skills through the same pipeline (canonicalize ->
   // stem -> stopword filter) so, e.g., a resume skill "React.js"/"REST APIs"
-  // satisfies a JD keyword "react"/"restapi".
-  const skillBlob = tokenize(arr(resumeSkills).join(" ")).join(" ");
+  // satisfies a JD keyword "react"/"restapi". `expandImplied` also lets a
+  // "REST API" skill satisfy a JD "api" keyword.
+  const skillBlob = expandImplied(tokenize(arr(resumeSkills).join(" "))).join(" ");
   const matched = [];
   const missing = [];
 
