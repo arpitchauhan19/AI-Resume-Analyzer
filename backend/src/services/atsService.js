@@ -86,6 +86,71 @@ function normalize(value) {
     .replace(/^[.-]+|[.-]+$/g, "");
 }
 
+// ---------------------------------------------------------------------------
+// Synonym / canonicalization layer
+// ---------------------------------------------------------------------------
+
+/**
+ * Ordered canonicalization rules. Each rule rewrites a family of equivalent
+ * skill spellings — differing only by case, punctuation, spacing, a common
+ * abbreviation, or an "s" plural — into ONE canonical token consisting solely
+ * of `[a-z0-9]`. Downstream, tokenization and {@link containsKeyword} then
+ * treat every variant as the same term, without any change to the scoring.
+ *
+ * Order matters: multi-word and dotted-suffix forms are collapsed BEFORE the
+ * bare abbreviations, so e.g. "node.js" is resolved before a standalone "js"
+ * rule could ever see it.
+ *
+ * False positives are avoided in two ways:
+ * 1. Word boundaries (`\b`) and explicit look-arounds keep a rule from firing
+ *    inside an unrelated word (e.g. the standalone "js"/"ts" rules never touch
+ *    the ".js" of "vue.js", and never match inside "artifacts").
+ * 2. No blanket transformations are applied: only the enumerated variants are
+ *    rewritten. In particular nothing maps "java", so "java" and "javascript"
+ *    stay distinct tokens and never match each other.
+ */
+const CANONICAL_RULES = [
+  // --- Multi-word terms -> single canonical token (also folds the "s" plural).
+  [/\brest(?:ful)?\s*api(?:s)?\b/gi, " restapi "], // REST API / REST APIs / RESTful API
+  [/\bmongo\s*db\b/gi, " mongodb "], //              Mongo DB / MongoDB
+  [/\bmachine\s*learning\b/gi, " ml "], //           Machine Learning / ML
+  [/\bartificial\s*intelligence\b/gi, " ai "], //    Artificial Intelligence / AI
+  [/\bc\s*sharp\b/gi, " csharp "], //                C Sharp / CSharp
+
+  // --- Punctuation-bearing language names.
+  [/\bc\s*\+\+/gi, " cpp "], //                      C++ / CPP (bare "cpp" already canonical)
+  [/\bc#/gi, " csharp "], //                         C#
+
+  // --- ".js"/"js" framework suffixes -> the bare framework name.
+  [/\breact(?:\.js|js)\b/gi, " react "], //          React.js / Reactjs -> react
+  [/\bnode(?:\.js|js)\b/gi, " node "], //            Node.js / Nodejs   -> node
+  [/\bexpress(?:\.js|js)\b/gi, " express "], //      Express.js / Expressjs -> express
+
+  // --- Standalone abbreviations ONLY (never the ".js" suffix of another word).
+  [/(?<![a-z0-9.#+])js(?![a-z0-9.#+])/gi, " javascript "], // JS -> javascript
+  [/(?<![a-z0-9.#+])ts(?![a-z0-9.#+])/gi, " typescript "], // TS -> typescript
+];
+
+/**
+ * Apply the {@link CANONICAL_RULES} to a text blob. Lower-cases the input
+ * (case-insensitive matching) and returns a string in which every recognised
+ * skill variant has been replaced by its canonical, punctuation-free token.
+ *
+ * This is the single "synonym layer" applied to BOTH sides of every comparison
+ * (job-description keywords and resume text/skills), which is what makes the
+ * matching case-, punctuation- and (where appropriate) plural-insensitive.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function canonicalize(text) {
+  let out = String(text || "").toLowerCase();
+  for (const [pattern, replacement] of CANONICAL_RULES) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 /**
  * Split arbitrary text into a list of normalized, meaningful tokens.
  * Drops stopwords, pure numbers and very short noise tokens.
@@ -94,8 +159,10 @@ function normalize(value) {
  * @returns {string[]}
  */
 function tokenize(text) {
-  return String(text || "")
-    .toLowerCase()
+  // Canonicalize variants (React.js -> react, REST APIs -> restapi, JS ->
+  // javascript, ...) BEFORE splitting so keyword extraction/matching operates
+  // on canonical tokens. `canonicalize` also lower-cases the text.
+  return canonicalize(text)
     // Split on anything that isn't a "word" character or a tech-term symbol.
     .split(/[^a-z0-9.+#-]+/)
     .map(normalize)
@@ -130,7 +197,10 @@ function buildResumeText(resume) {
     ...arr(projects),
   ];
 
-  return parts.filter(Boolean).join(" ").toLowerCase();
+  // Canonicalize the whole resume blob so canonical JD keywords (e.g. "react",
+  // "restapi") match their variant spellings in the resume. `canonicalize`
+  // also lower-cases the text.
+  return canonicalize(parts.filter(Boolean).join(" "));
 }
 
 /** Coerce a value into an array of strings (defensive against bad input). */
@@ -209,7 +279,9 @@ function matchKeywords(keywords, resumeText) {
  * @returns {{ percent: number, matched: string[], missing: string[] }}
  */
 function computeSkillMatch(resumeSkills, keywords) {
-  const skillBlob = arr(resumeSkills).map(normalize).join(" ");
+  // Canonicalize the explicit skills blob with the same synonym layer so, e.g.,
+  // a resume skill "React.js" satisfies a JD keyword "react".
+  const skillBlob = canonicalize(arr(resumeSkills).map(normalize).join(" "));
   const matched = [];
   const missing = [];
 
@@ -411,4 +483,5 @@ module.exports = {
   generateSuggestions,
   tokenize,
   normalize,
+  canonicalize,
 };
