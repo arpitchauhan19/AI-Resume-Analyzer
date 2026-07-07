@@ -10,10 +10,18 @@ Design notes
 * **PDF text extraction** is done with PyMuPDF (``fitz``).
 * **Contact details** (email / phone) use plain regular expressions, which are
   far more reliable than NLP for these well-structured patterns.
-* **Name detection** uses spaCy's ``PERSON`` named-entity recognition, with a
-  heuristic fallback to the first non-empty line of the document.
+* **Name detection** uses spaCy's ``PERSON`` named-entity recognition combined
+  with positional and lexical heuristics that explicitly reject cities,
+  universities, employers and job titles (so "Surat" or "Example University"
+  never win over the real candidate name).
 * **Sections** (skills / education / experience / projects) are detected by
-  scanning for common heading keywords and slicing the text between headings.
+  scanning for common heading keywords (with synonym + prefix matching) and
+  slicing the text between headings. Non-extracted headings still act as
+  boundaries so one section's text never bleeds into another.
+* **Entries** inside education / experience / projects are *grouped*: a single
+  real-world entry that spans several physical lines (e.g. degree + GPA, or a
+  job title followed by bullet points) is merged into one list item instead of
+  being split into many.
 
 No external LLM APIs (OpenAI, Gemini, etc.) are used anywhere.
 """
@@ -22,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import fitz  # PyMuPDF
 
@@ -70,20 +78,42 @@ PHONE_RE = re.compile(
     r"\d{2,4}(?:[\s.\-]?\d{2,4}){1,4}"     # the main number groups
 )
 
-# Section headings we know how to recognise. Order does not matter; we detect
-# any of these on a line and treat that line as a section boundary.
+# Extracted sections we build structured output for. Each canonical key maps to
+# a list of heading synonyms. Matching is done as a *whole-word prefix* (so
+# "Work Experience (5 yrs)" still matches "work experience"), and when several
+# keywords match a heading the most specific (longest) one wins.
 SECTION_KEYWORDS: Dict[str, List[str]] = {
-    "skills": ["skills", "technical skills", "core competencies", "technologies"],
-    "education": ["education", "academic", "qualification", "qualifications"],
-    "experience": [
-        "experience",
-        "work experience",
-        "professional experience",
-        "employment",
-        "work history",
+    "skills": [
+        "skills", "technical skills", "core competencies", "technologies",
+        "technical proficiencies", "areas of expertise", "key skills",
+        "skill set", "tools and technologies", "technical skill",
     ],
-    "projects": ["projects", "personal projects", "academic projects", "project work"],
+    "education": [
+        "education", "academics", "academic", "qualification", "qualifications",
+        "educational qualifications", "academic background", "education details",
+    ],
+    "experience": [
+        "experience", "work experience", "professional experience",
+        "employment", "work history", "professional background",
+        "industry experience", "internship", "internships",
+    ],
+    "projects": [
+        "projects", "personal projects", "academic projects", "project work",
+        "key projects", "notable projects", "major projects", "project",
+    ],
 }
+
+# Headings we do NOT extract but must still recognise so they terminate the
+# previous section (prevents e.g. "Certifications" text bleeding into projects).
+BOUNDARY_HEADINGS: List[str] = [
+    "summary", "objective", "career objective", "profile", "about", "about me",
+    "professional summary", "certifications", "certification", "courses",
+    "awards", "award", "achievements", "accomplishments", "honors", "honours",
+    "publications", "interests", "hobbies", "languages", "references",
+    "reference", "activities", "extracurricular", "volunteer", "volunteering",
+    "contact", "personal details", "personal information", "declaration",
+    "strengths", "coursework",
+]
 
 # A curated skill dictionary used as a fallback / supplement to the free-text
 # "Skills" section. This keeps results meaningful even for resumes that bury
@@ -100,6 +130,72 @@ KNOWN_SKILLS: List[str] = [
     "linux", "bash", "graphql", "rest", "grpc", "machine learning", "deep learning",
     "nlp", "computer vision", "data science", "data analysis", "tableau", "power bi",
 ]
+
+# --- Lexicons used to keep a name from being a place / employer / job title ---
+
+# Common cities / regions (with an emphasis on ones spaCy frequently mislabels
+# as PERSON). This is a safety net *in addition to* spaCy's GPE/LOC detection.
+_LOCATION_WORDS = {
+    "surat", "ahmedabad", "mumbai", "delhi", "pune", "bangalore", "bengaluru",
+    "hyderabad", "chennai", "kolkata", "jaipur", "lucknow", "kanpur", "nagpur",
+    "indore", "bhopal", "patna", "vadodara", "rajkot", "gurgaon", "gurugram",
+    "noida", "kochi", "coimbatore", "visakhapatnam", "nashik", "gujarat",
+    "maharashtra", "karnataka", "kerala", "punjab", "rajasthan", "india",
+    "usa", "uk", "city", "state", "district", "road", "street", "nagar",
+    "sector", "colony", "near", "town", "village",
+}
+
+# Words that mark an organisation / educational institution.
+_ORG_EDU_WORDS = {
+    "university", "college", "institute", "institution", "school", "academy",
+    "polytechnic", "vidyalaya", "technologies", "technology", "ltd", "limited",
+    "inc", "incorporated", "pvt", "private", "corp", "corporation", "company",
+    "systems", "solutions", "labs", "laboratory", "department", "faculty",
+    "gmail", "yahoo", "hotmail", "outlook", "linkedin", "github",
+}
+
+# Words that mark a job title / role line (name is almost never one of these).
+_TITLE_WORDS = {
+    "engineer", "developer", "manager", "analyst", "consultant", "designer",
+    "intern", "student", "administrator", "architect", "scientist", "specialist",
+    "officer", "lead", "senior", "junior", "freelancer", "programmer",
+    "executive", "associate", "trainee", "professional",
+}
+
+# Lowercase name particles that are allowed even though they are not capitalised
+# (e.g. "van der Berg", "de Souza").
+_NAME_CONNECTORS = {
+    "van", "von", "der", "den", "de", "da", "di", "del", "della", "la", "le",
+    "bin", "al", "ibn", "e",
+}
+
+# All heading words, used to stop a heading line from being read as a name.
+_ALL_HEADING_WORDS = set()
+for _kws in SECTION_KEYWORDS.values():
+    for _kw in _kws:
+        _ALL_HEADING_WORDS.update(_kw.split())
+for _kw in BOUNDARY_HEADINGS:
+    _ALL_HEADING_WORDS.update(_kw.split())
+
+_NAME_BLOCKLIST = (
+    _LOCATION_WORDS | _ORG_EDU_WORDS | _TITLE_WORDS | _ALL_HEADING_WORDS
+)
+
+# Year / date signals reused by the entry-grouping heuristics.
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+_PRESENT_RE = re.compile(r"\b(present|current|till date|ongoing|now)\b", re.IGNORECASE)
+_DEGREE_RE = re.compile(
+    r"\b("
+    r"b\.?\s?sc|m\.?\s?sc|b\.?\s?tech|m\.?\s?tech|b\.?\s?e|m\.?\s?e|"
+    r"b\.?\s?a|m\.?\s?a|b\.?\s?com|m\.?\s?com|bachelor|master|masters|"
+    r"ph\.?\s?d|mba|bba|bca|mca|b\.?\s?ed|diploma|"
+    r"h\.?s\.?c|s\.?s\.?c|higher secondary|senior secondary|secondary"
+    r")\b",
+    re.IGNORECASE,
+)
+_TITLE_SEPARATOR_RE = re.compile(r"\s[-\u2013\u2014|]\s")  # " - ", " – ", " — ", " | "
+_BULLET_CHARS = "-•*·●▪◦‣"
+_BULLET_RE = re.compile(r"^[\s" + re.escape(_BULLET_CHARS) + r"]+")
 
 
 # ---------------------------------------------------------------------------
@@ -160,76 +256,171 @@ def extract_phone(text: str) -> Optional[str]:
     return None
 
 
-def extract_name(text: str) -> Optional[str]:
-    """Best-effort full-name extraction.
+def _looks_like_name_line(line: str) -> bool:
+    """Heuristic test for "is this line plausibly a person's full name?".
 
-    Strategy:
-    1. Run spaCy NER on the first chunk of the document and return the first
-       ``PERSON`` entity (names almost always appear near the top).
-    2. Fall back to the first non-empty line that looks like a name
-       (1-4 capitalized words, no digits / "@").
+    Rejects lines that contain digits/emails, are too long, are the wrong
+    length in words, or whose words hit the location / organisation / job-title
+    / heading blocklists (this is what stops "Surat" or "Example University"
+    from being treated as a name).
     """
 
-    header = "\n".join(
-        line.strip() for line in text.splitlines() if line.strip()
-    )[:600]
+    if not line or "@" in line or any(ch.isdigit() for ch in line):
+        return False
+    if len(line) > 40:
+        return False
 
+    tokens = line.split()
+    if not (2 <= len(tokens) <= 4):
+        return False
+
+    low_tokens = [t.lower().strip(".,") for t in tokens]
+    for lt in low_tokens:
+        if lt in _NAME_BLOCKLIST:
+            return False
+
+    for token, lt in zip(tokens, low_tokens):
+        if lt in _NAME_CONNECTORS:
+            continue
+        # Each real name word must be capitalised (Titlecase or ALLCAPS) and
+        # contain only letters plus a few name punctuation marks.
+        if not re.match(r"^[A-Z][A-Za-z.\-']*$", token):
+            return False
+    return True
+
+
+def _clean_name(line: str) -> str:
+    """Normalise whitespace in a detected name line."""
+
+    return re.sub(r"\s{2,}", " ", line).strip()
+
+
+def extract_name(text: str) -> Optional[str]:
+    """Best-effort full-name extraction that resists common false positives.
+
+    Strategy (in priority order):
+    1. Run spaCy over the header to learn which spans are ``GPE``/``LOC``/``ORG``
+       (locations, employers, universities) and which are ``PERSON``.
+    2. Return the first top-of-document line that *looks* like a name **and**
+       spaCy also recognises as a ``PERSON`` (strongest signal).
+    3. Otherwise return the first top-of-document line that looks like a name
+       and is not flagged as a location/organisation (names sit at the very
+       top; this positional bias avoids picking a city mentioned lower down).
+    4. As a last resort, return the first spaCy ``PERSON`` entity that passes
+       the name heuristics and is not also a location/organisation.
+    """
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    header = lines[:12]
+    if not header:
+        return None
+
+    gpe_org: set = set()
+    person_ents: List[str] = []
     try:
         nlp = _get_nlp()
-        doc = nlp(header)
+        doc = nlp("\n".join(header))
         for ent in doc.ents:
-            if ent.label_ == "PERSON":
-                # An entity may span a line break (e.g. "Jane Doe\nSoftware");
-                # keep only the first physical line and cap at 4 words.
-                candidate = ent.text.split("\n", 1)[0].strip()
-                if candidate and len(candidate.split()) <= 4:
-                    return candidate
+            first_line = ent.text.split("\n", 1)[0].strip()
+            if ent.label_ in ("GPE", "LOC", "ORG", "FAC"):
+                gpe_org.add(first_line.lower())
+            elif ent.label_ == "PERSON":
+                person_ents.append(first_line)
     except Exception as exc:  # pragma: no cover - model issues
         logger.warning("spaCy name detection failed, using fallback: %s", exc)
 
-    for line in header.splitlines():
-        words = line.split()
-        if (
-            1 <= len(words) <= 4
-            and "@" not in line
-            and not any(ch.isdigit() for ch in line)
-            and all(w[0].isupper() for w in words if w)
-        ):
-            return line.strip()
+    person_lower = {p.lower() for p in person_ents}
+
+    def acceptable(line: str) -> bool:
+        return _looks_like_name_line(line) and line.lower() not in gpe_org
+
+    # 2. Header line confirmed as a PERSON by spaCy.
+    for line in header:
+        if acceptable(line) and line.lower() in person_lower:
+            return _clean_name(line)
+
+    # 3. First acceptable header line (positional bias: names are at the top).
+    for line in header:
+        if acceptable(line):
+            return _clean_name(line)
+
+    # 4. Any spaCy PERSON entity that is not a location/org and looks like a name.
+    for person in person_ents:
+        if _looks_like_name_line(person) and person.lower() not in gpe_org:
+            return _clean_name(person)
+
     return None
 
 
 # ---------------------------------------------------------------------------
-# Step 3: section-based extraction
+# Step 3: section detection
 # ---------------------------------------------------------------------------
+
+def _match_heading(line: str) -> Optional[str]:
+    """Classify a line as a section heading.
+
+    Returns the canonical section name for an extracted section, the sentinel
+    ``"_boundary"`` for a recognised-but-not-extracted heading, or ``None`` if
+    the line is not a heading.
+
+    Robustness features:
+    * leading bullets / numbering and trailing colons are stripped;
+    * matching is a whole-word *prefix* match, so decorated headings such as
+      "WORK EXPERIENCE:" or "Experience (2019-2023)" are still recognised;
+    * when multiple keywords match, the most specific (longest) one wins, so
+      "Academic Projects" resolves to *projects*, not *education*.
+    """
+
+    raw = line.strip()
+    if not raw:
+        return None
+
+    # Strip leading bullets / numbering (e.g. "1.", "-", "•") and trailing colon.
+    cleaned = re.sub(r"^[\s\d\.\)\-•*·●▪◦]+", "", raw).strip().rstrip(":").strip()
+    low = re.sub(r"[^a-z ]", " ", cleaned.lower())
+    words = low.split()
+    if not words or len(words) > 5:
+        return None
+
+    best_canonical: Optional[str] = None
+    best_len = 0
+
+    def consider(canonical: str, keyword: str) -> None:
+        nonlocal best_canonical, best_len
+        kw_words = keyword.split()
+        n = len(kw_words)
+        if words[:n] == kw_words and (len(words) - n) <= 2 and n > best_len:
+            best_canonical, best_len = canonical, n
+
+    for canonical, keywords in SECTION_KEYWORDS.items():
+        for keyword in keywords:
+            consider(canonical, keyword)
+    for keyword in BOUNDARY_HEADINGS:
+        consider("_boundary", keyword)
+
+    return best_canonical
+
 
 def _split_into_sections(text: str) -> Dict[str, str]:
     """Slice the resume text into sections keyed by canonical section name.
 
-    A line is treated as a heading if, after stripping/lowercasing, it matches
-    one of the keywords in :data:`SECTION_KEYWORDS` (and is short enough to be
-    a heading rather than a sentence). Everything between two headings is the
-    body of the first heading's section.
+    Everything between two headings is the body of the first heading's section.
+    Recognised-but-not-extracted headings (see :data:`BOUNDARY_HEADINGS`) reset
+    the "current section" to ``None`` so their content is never absorbed into
+    the preceding extracted section (this is what prevents section bleed).
     """
 
-    lines = text.splitlines()
     sections: Dict[str, List[str]] = {}
     current: Optional[str] = None
 
-    def match_heading(line: str) -> Optional[str]:
-        cleaned = re.sub(r"[^a-z ]", "", line.strip().lower()).strip()
-        if not cleaned or len(cleaned.split()) > 4:
-            return None
-        for canonical, keywords in SECTION_KEYWORDS.items():
-            if cleaned in keywords:
-                return canonical
-        return None
-
-    for line in lines:
-        heading = match_heading(line)
-        if heading:
-            current = heading
-            sections.setdefault(current, [])
+    for line in text.splitlines():
+        heading = _match_heading(line)
+        if heading is not None:
+            if heading == "_boundary":
+                current = None  # stop capturing; do not bleed into prev section
+            else:
+                current = heading
+                sections.setdefault(current, [])
             continue
         if current is not None and line.strip():
             sections[current].append(line.strip())
@@ -237,38 +428,227 @@ def _split_into_sections(text: str) -> Dict[str, str]:
     return {key: "\n".join(value).strip() for key, value in sections.items()}
 
 
-def _clean_items(block: str) -> List[str]:
-    """Turn a free-text section block into a list of clean line items."""
+# ---------------------------------------------------------------------------
+# Step 4: line helpers + entry grouping
+# ---------------------------------------------------------------------------
 
-    items: List[str] = []
+def _iter_clean_lines(block: str) -> List[Tuple[str, bool]]:
+    """Return ``(text, was_bullet)`` for each non-empty line of a section block.
+
+    ``text`` has any leading bullet / dash markers stripped; ``was_bullet``
+    records whether the original line started with such a marker (used by the
+    grouping heuristics to decide entry boundaries).
+    """
+
+    out: List[Tuple[str, bool]] = []
     for raw in block.splitlines():
-        line = raw.strip(" \t-•*·●▪◦").strip()
-        if line:
-            items.append(line)
-    return items
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        was_bullet = bool(_BULLET_RE.match(stripped)) and stripped[0] in _BULLET_CHARS
+        clean = _BULLET_RE.sub("", stripped).strip()
+        if clean:
+            out.append((clean, was_bullet))
+    return out
+
+
+def _finalize(entries: List[str]) -> List[str]:
+    """Collapse whitespace and drop empties for a list of grouped entries."""
+
+    result = []
+    for entry in entries:
+        collapsed = re.sub(r"\s{2,}", " ", entry).strip(" \t-–—:").strip()
+        if collapsed:
+            result.append(collapsed)
+    return result
+
+
+def _clean_items(block: str) -> List[str]:
+    """Turn a free-text section block into a list of clean line items.
+
+    Retained for backward compatibility; the section extractors below use the
+    smarter grouping helpers instead.
+    """
+
+    return [clean for clean, _ in _iter_clean_lines(block)]
+
+
+def extract_education(sections: Dict[str, str]) -> List[str]:
+    """Group the education block into one item per qualification.
+
+    A degree keyword (B.Sc, B.Tech, Bachelor, MBA, Diploma, …) anchors an
+    entry. Institute / year / GPA / coursework lines attach to the current
+    entry rather than becoming separate items. A new entry begins on a degree
+    line only once the current entry already contains a degree — so a
+    degree-line + institute-line pair for the *same* qualification is not split.
+    """
+
+    lines = _iter_clean_lines(sections.get("education", ""))
+    entries: List[str] = []
+    current: List[str] = []
+    current_has_degree = False
+
+    for clean, _bullet in lines:
+        is_degree = bool(_DEGREE_RE.search(clean))
+        if current and is_degree and current_has_degree:
+            entries.append(" ".join(current))
+            current = [clean]
+            current_has_degree = True
+        else:
+            current.append(clean)
+            current_has_degree = current_has_degree or is_degree
+
+    if current:
+        entries.append(" ".join(current))
+    return _finalize(entries)
+
+
+def extract_experience(sections: Dict[str, str]) -> List[str]:
+    """Group the experience block into one item per role.
+
+    A non-bullet line carrying a date/year or "Present" anchors a role. Bullet
+    points and description lines attach to the current role. A new role starts
+    on another dated header only once the current entry already has a date — so
+    a role-line, company-line and date-line describing the *same* job stay
+    together.
+    """
+
+    lines = _iter_clean_lines(sections.get("experience", ""))
+    entries: List[str] = []
+    current: List[str] = []
+    current_has_date = False
+
+    for clean, was_bullet in lines:
+        has_date = bool(_YEAR_RE.search(clean) or _PRESENT_RE.search(clean))
+        is_header = has_date and not was_bullet
+        if current and is_header and current_has_date:
+            entries.append(" ".join(current))
+            current = [clean]
+            current_has_date = True
+        else:
+            current.append(clean)
+            current_has_date = current_has_date or has_date
+
+    if current:
+        entries.append(" ".join(current))
+    return _finalize(entries)
+
+
+def _ends_sentence(text: str) -> bool:
+    return text.rstrip().endswith((".", "!", "?"))
+
+
+def extract_projects(sections: Dict[str, str]) -> List[str]:
+    """Group the projects block conservatively into one item per project.
+
+    A new project starts only on a strong signal — a bullet marker, a
+    "Title - description" separator, or a short Title-Case title line that
+    follows a completed sentence. Wrapped description lines attach to the
+    current project instead of each becoming its own item, which fixes the
+    "projects extraction is too aggressive" behaviour.
+    """
+
+    lines = _iter_clean_lines(sections.get("projects", ""))
+    entries: List[str] = []
+    current: List[str] = []
+    prev_clean: Optional[str] = None
+    prev_bullet = False
+
+    for clean, was_bullet in lines:
+        starts_upper = clean[:1].isupper()
+        has_separator = bool(_TITLE_SEPARATOR_RE.search(clean))
+        short_title = (
+            starts_upper
+            and not _ends_sentence(clean)
+            and len(clean.split()) <= 8
+            and (prev_clean is None or prev_bullet or _ends_sentence(prev_clean))
+        )
+        is_new = was_bullet or has_separator or short_title
+
+        if current and is_new:
+            entries.append(" ".join(current))
+            current = [clean]
+        else:
+            current.append(clean)
+
+        prev_clean = clean
+        prev_bullet = was_bullet
+
+    if current:
+        entries.append(" ".join(current))
+    return _finalize(entries)
+
+
+# ---------------------------------------------------------------------------
+# Step 5: skills extraction
+# ---------------------------------------------------------------------------
+
+def _tokenize_skills_block(block: str) -> List[str]:
+    """Split a free-text "Skills" block into candidate skill tokens.
+
+    Handles category-prefixed lines ("Languages: Python, Java" -> Python, Java)
+    and splits each line on commas / semicolons / pipes / bullets. Slashes are
+    deliberately *not* split on so "CI/CD" survives.
+    """
+
+    tokens: List[str] = []
+    for raw in block.splitlines():
+        line = raw.strip().lstrip(_BULLET_CHARS).strip()
+        if not line:
+            continue
+        # Drop a leading "Category:" label but keep the listed skills after it.
+        label = re.match(r"^[A-Za-z/&+ ]{1,30}:\s*(.+)$", line)
+        if label:
+            line = label.group(1)
+        for chunk in re.split(r"[,;|•·]", line):
+            token = chunk.strip(" \t-:·•").strip()
+            if token:
+                tokens.append(token)
+    return tokens
+
+
+def _is_valid_skill(token: str) -> bool:
+    """Reject prose / sentences that leak into a Skills section."""
+
+    if not token or len(token) > 40:
+        return False
+    words = token.split()
+    if len(words) > 4:  # real skills are short ("machine learning", "power bi")
+        return False
+    if token.endswith(".") and len(words) > 2:  # trailing period => a sentence
+        return False
+    if not re.search(r"[A-Za-z]", token):
+        return False
+    return True
 
 
 def extract_skills(text: str, sections: Dict[str, str]) -> List[str]:
-    """Extract skills from the dedicated section plus a known-skills scan."""
+    """Extract skills from the dedicated section plus a known-skills scan.
+
+    Improvements over naive splitting: category labels are stripped, prose
+    sentences are filtered out, and the result is de-duplicated
+    case-insensitively (so "React" and "react" never both appear).
+    """
 
     found: List[str] = []
 
-    # 1. Parse the dedicated "Skills" section if present (comma/newline lists).
+    # 1. Parse the dedicated "Skills" section if present.
     skills_block = sections.get("skills", "")
     if skills_block:
-        for chunk in re.split(r"[\n,;|•]", skills_block):
-            token = chunk.strip(" \t-:·●▪◦").strip()
-            if token and len(token) <= 40:
+        for token in _tokenize_skills_block(skills_block):
+            if _is_valid_skill(token):
                 found.append(token)
 
-    # 2. Supplement with dictionary matches anywhere in the document.
+    # 2. Supplement with dictionary matches anywhere in the document (catches
+    #    skills that only appear in prose). These are known, real skills.
     lowered = text.lower()
     for skill in KNOWN_SKILLS:
         pattern = r"(?<![a-zA-Z0-9+#.])" + re.escape(skill) + r"(?![a-zA-Z0-9+#.])"
         if re.search(pattern, lowered):
             found.append(skill)
 
-    # Deduplicate case-insensitively while preserving order.
+    # Deduplicate case-insensitively while preserving order (section entries,
+    # which keep their original casing, take precedence over dictionary hits).
     seen = set()
     unique: List[str] = []
     for skill in found:
@@ -280,7 +660,12 @@ def extract_skills(text: str, sections: Dict[str, str]) -> List[str]:
 
 
 def extract_section_items(sections: Dict[str, str], name: str) -> List[str]:
-    """Return cleaned line items for a given canonical section name."""
+    """Return cleaned line items for a given canonical section name.
+
+    Retained for backward compatibility. New code should prefer the grouping
+    extractors (:func:`extract_education`, :func:`extract_experience`,
+    :func:`extract_projects`).
+    """
 
     return _clean_items(sections.get(name, ""))
 
@@ -305,8 +690,8 @@ def parse_resume(pdf_bytes: bytes) -> dict:
             "phone": extract_phone(text),
         },
         "skills": extract_skills(text, sections),
-        "education": extract_section_items(sections, "education"),
-        "experience": extract_section_items(sections, "experience"),
-        "projects": extract_section_items(sections, "projects"),
+        "education": extract_education(sections),
+        "experience": extract_experience(sections),
+        "projects": extract_projects(sections),
         "full_text": text,
     }
