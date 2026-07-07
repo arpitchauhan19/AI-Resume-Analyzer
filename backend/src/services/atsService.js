@@ -39,7 +39,12 @@ const SCORE_WEIGHTS = {
 
 /**
  * Very common English words (plus generic job-posting filler) that carry no
- * signal as ATS keywords. Kept small and focused rather than exhaustive.
+ * signal as ATS keywords.
+ *
+ * NOTE: {@link stem} runs BEFORE this set is consulted, so only the *canonical*
+ * (singular / base) form of a filler word needs to be listed here — e.g.
+ * "applications" is folded to "application" and "developers" to "developer"
+ * before the lookup, so listing the singular alone is enough.
  */
 const STOPWORDS = new Set([
   "a", "an", "the", "and", "or", "but", "if", "then", "else", "for", "of",
@@ -52,13 +57,28 @@ const STOPWORDS = new Set([
   "over", "under", "about", "more", "most", "some", "any", "all", "each",
   "who", "whom", "which", "what", "when", "where", "why", "how", "up",
   "down", "out", "off", "again", "once", "here", "there", "such", "only",
-  "own", "same", "other", "while", "during", "per", "via",
+  "own", "same", "other", "while", "during", "per", "via", "across", "within",
   // Generic job-posting filler that would otherwise dominate keyword lists.
-  "experience", "experiences", "work", "working", "role", "responsibilities",
-  "responsibility", "requirements", "required", "preferred", "ability",
-  "able", "team", "teams", "company", "candidate", "candidates", "job",
-  "position", "looking", "join", "including", "etc", "years", "year",
-  "strong", "good", "excellent", "knowledge", "skills", "skill", "plus",
+  "experience", "work", "role", "responsibility", "requirement", "required",
+  "require", "preferred", "prefer", "preference", "ability", "able", "team",
+  "company", "candidate", "job", "position", "looking", "look", "join",
+  "including", "include", "etc", "year", "strong", "good", "excellent",
+  "knowledge", "skill", "plus", "seeking", "seek", "hire", "hiring",
+  "understand", "understanding", "expertise", "expert", "proficient",
+  "proficiency", "familiar", "familiarity", "passionate", "motivated",
+  "self", "hand", "handson", "responsible", "someone", "somebody",
+  "something", "anyone", "anybody", "anything", "everyone", "everybody",
+  "everything", "nobody", "nothing", "one", "many", "much", "several",
+  // Common English/verb filler + the specific words called out in the brief.
+  // (Plurals/verb inflections are folded to these base forms by `stem`.)
+  "use", "using", "build", "building", "built", "develop", "developed",
+  "developing", "development", "developer", "design", "designed", "designing",
+  "code", "coding", "coded", "data", "backend", "back-end", "frontend",
+  "front-end", "fullstack", "full", "stack", "need", "application", "app",
+  "software", "solution", "system", "platform", "product", "service",
+  "environment", "tool", "technology", "feature", "feature-rich", "based",
+  "help", "make", "made", "get", "got", "new", "existing", "various",
+  "well", "high", "quality", "scalable", "efficient", "robust", "modern",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -129,6 +149,10 @@ const CANONICAL_RULES = [
   // --- Standalone abbreviations ONLY (never the ".js" suffix of another word).
   [/(?<![a-z0-9.#+])js(?![a-z0-9.#+])/gi, " javascript "], // JS -> javascript
   [/(?<![a-z0-9.#+])ts(?![a-z0-9.#+])/gi, " typescript "], // TS -> typescript
+
+  // --- Versioned front-end tokens -> their base language (HTML5 -> html, CSS3 -> css).
+  [/\bhtml\s*\d+\b/gi, " html "],
+  [/\bcss\s*\d+\b/gi, " css "],
 ];
 
 /**
@@ -151,6 +175,93 @@ function canonicalize(text) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Stemming / plural normalization
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical technical tokens that must NEVER be altered by {@link stem}. Many
+ * genuinely end in "s" (`aws`, `kubernetes`, `redis`, `pandas`, `keras`) or
+ * would otherwise be mangled by a naive suffix strip, so they are protected
+ * outright. All values are the lowercase canonical token form.
+ */
+const PROTECTED_TERMS = new Set([
+  "react", "node", "express", "mongodb", "javascript", "typescript", "python",
+  "fastapi", "docker", "redis", "aws", "kubernetes", "git", "github", "gitlab",
+  "restapi", "graphql", "jwt", "oauth", "sql", "mysql", "postgresql", "sqlite",
+  "html", "css", "sass", "scss", "tailwind", "bootstrap", "ml", "ai", "nlp",
+  "tensorflow", "pytorch", "keras", "numpy", "pandas", "scikit-learn", "spacy",
+  "nltk", "opencv", "cpp", "csharp", "redux", "angular", "vue", "svelte",
+  "django", "flask", "spring", "kafka", "rabbitmq", "elasticsearch", "grpc",
+  "terraform", "jenkins", "azure", "gcp", "linux", "bash", "matlab", "kotlin",
+  "scala", "swift", "php", "ruby", "rust", "golang", "devops",
+]);
+
+/**
+ * Explicit lemma folding for verb/noun families that a simple suffix strip
+ * cannot collapse (e.g. "integration" -> "integrate"). Kept intentionally
+ * small and exact so it can never corrupt an unrelated technical term.
+ */
+const LEMMA_MAP = new Map([
+  // "apis"/"uris" end in "-is", which the general plural rule intentionally
+  // skips (to protect analysis/axis/redis), so fold them explicitly.
+  ["apis", "api"],
+  ["uris", "uri"],
+  ["integration", "integrate"],
+  ["integrations", "integrate"],
+  ["integrated", "integrate"],
+  ["integrating", "integrate"],
+  ["deployment", "deploy"],
+  ["deployments", "deploy"],
+  ["deployed", "deploy"],
+  ["deploying", "deploy"],
+  ["testing", "test"],
+  ["tested", "test"],
+  ["tests", "test"],
+]);
+
+/**
+ * Reduce a token to a canonical singular/base form so that plural and simple
+ * verb variants collapse to ONE keyword (api/apis -> api,
+ * project/projects -> project, integration/integrated -> integrate).
+ *
+ * Safety rules that prevent damaging real technical keywords:
+ * - protected terms are returned untouched (`aws`, `kubernetes`, ...);
+ * - tokens containing a digit (`html5`, `oauth2`, `s3`, `es6`) or a tech symbol
+ *   (`node.js`, `c++`, `c#`, `ci-cd`) are never stemmed;
+ * - the "-s" strip is skipped for `ss`/`us`/`is`/`os` endings (so `css`, `ios`,
+ *   `axis`, `status` survive) and only applies when the result stays >= 3 chars.
+ *
+ * @param {string} token - already normalized/lowercased
+ * @returns {string}
+ */
+function stem(token) {
+  if (!token) return token;
+  if (PROTECTED_TERMS.has(token)) return token;
+  if (/[0-9]/.test(token)) return token;
+  if (/[.+#-]/.test(token)) return token;
+
+  if (LEMMA_MAP.has(token)) return LEMMA_MAP.get(token);
+
+  // Plural: "-ies" -> "-y" (libraries -> library, dependencies -> dependency).
+  if (token.endsWith("ies") && token.length > 4) {
+    return `${token.slice(0, -3)}y`;
+  }
+  // Plural: trailing "-s" (apis -> api, projects -> project), but never for
+  // ss/us/is/os endings which are usually part of the word itself.
+  if (
+    token.endsWith("s") &&
+    !token.endsWith("ss") &&
+    !token.endsWith("us") &&
+    !token.endsWith("is") &&
+    !token.endsWith("os")
+  ) {
+    const singular = token.slice(0, -1);
+    if (singular.length >= 3) return singular;
+  }
+  return token;
+}
+
 /**
  * Split arbitrary text into a list of normalized, meaningful tokens.
  * Drops stopwords, pure numbers and very short noise tokens.
@@ -166,6 +277,9 @@ function tokenize(text) {
     // Split on anything that isn't a "word" character or a tech-term symbol.
     .split(/[^a-z0-9.+#-]+/)
     .map(normalize)
+    // Fold plural/verb variants to a canonical base BEFORE stopword filtering,
+    // so only the base form of each filler word needs to live in STOPWORDS.
+    .map(stem)
     .filter((token) => {
       if (token.length < 2) return false; // drop single chars / empties
       if (STOPWORDS.has(token)) return false;
@@ -197,10 +311,11 @@ function buildResumeText(resume) {
     ...arr(projects),
   ];
 
-  // Canonicalize the whole resume blob so canonical JD keywords (e.g. "react",
-  // "restapi") match their variant spellings in the resume. `canonicalize`
-  // also lower-cases the text.
-  return canonicalize(parts.filter(Boolean).join(" "));
+  // Run the resume through the SAME pipeline as the JD keywords (canonicalize
+  // -> stem -> stopword filter) and rejoin as space-separated canonical tokens.
+  // Using the identical normalization on both sides is what lets a resume's
+  // "APIs"/"projects"/"React.js" satisfy a JD keyword "api"/"project"/"react".
+  return tokenize(parts.filter(Boolean).join(" ")).join(" ");
 }
 
 /** Coerce a value into an array of strings (defensive against bad input). */
@@ -279,9 +394,10 @@ function matchKeywords(keywords, resumeText) {
  * @returns {{ percent: number, matched: string[], missing: string[] }}
  */
 function computeSkillMatch(resumeSkills, keywords) {
-  // Canonicalize the explicit skills blob with the same synonym layer so, e.g.,
-  // a resume skill "React.js" satisfies a JD keyword "react".
-  const skillBlob = canonicalize(arr(resumeSkills).map(normalize).join(" "));
+  // Normalize the explicit skills through the same pipeline (canonicalize ->
+  // stem -> stopword filter) so, e.g., a resume skill "React.js"/"REST APIs"
+  // satisfies a JD keyword "react"/"restapi".
+  const skillBlob = tokenize(arr(resumeSkills).join(" ")).join(" ");
   const matched = [];
   const missing = [];
 
