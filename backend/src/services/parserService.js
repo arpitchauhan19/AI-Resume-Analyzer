@@ -46,39 +46,136 @@ function buildParseForm(file) {
 }
 
 /**
+ * Serializes a response body for structured log output.
+ *
+ * @param {unknown} data
+ * @returns {string}
+ */
+function serializeHealthLogBody(data) {
+  if (data === undefined) return "(undefined)";
+  if (data === null) return "(null)";
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (typeof data === "string") return data;
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return String(data);
+  }
+}
+
+/**
+ * Normalizes the parser health JSON body regardless of axios responseType.
+ *
+ * @param {unknown} data
+ * @returns {{ status?: string, message?: string } | null}
+ */
+function normalizeHealthBody(data) {
+  if (data && typeof data === "object" && !Buffer.isBuffer(data) && !Array.isArray(data)) {
+    return data;
+  }
+  if (typeof data === "string") {
+    const trimmed = data.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
  * Pings the parser `GET /health` endpoint. Never throws — callers use this for
  * orchestrator health checks and cold-start warm-up without failing the API.
  *
  * @returns {Promise<{ status: "healthy" | "unavailable", message?: string }>}
  */
 async function checkParserHealth() {
+  const healthUrl = `${env.parserServiceUrl}/health`;
+  const method = "GET";
+
+  console.info("[parser][health] Request: method=%s url=%s", method, healthUrl);
+
   try {
-    const { data } = await parserClient.get("/health", {
+    const response = await axios.request({
+      method,
+      url: healthUrl,
       timeout: PARSER_HEALTH_TIMEOUT_MS,
-      // Render returns 502/503 while the container is booting — treat as unreachable.
-      validateStatus: (status) => status >= 200 && status < 300,
+      headers: { Accept: "application/json" },
+      // Resolve every HTTP status here so status/body are always logged.
+      validateStatus: () => true,
     });
-    if (data?.status === "healthy") {
+
+    const httpStatus = response.status;
+    const rawBody = response.data;
+    const body = normalizeHealthBody(rawBody);
+    const bodyStatus = body?.status;
+
+    console.info(
+      "[parser][health] Response: method=%s url=%s httpStatus=%s body=%s axiosCode=%s axiosMessage=%s parsedStatus=%s",
+      method,
+      healthUrl,
+      httpStatus,
+      serializeHealthLogBody(rawBody),
+      "—",
+      "—",
+      bodyStatus ?? "(missing)"
+    );
+
+    if (httpStatus >= 200 && httpStatus < 300 && bodyStatus === "healthy") {
       return { status: "healthy" };
     }
-    return {
-      status: "unavailable",
-      message: data?.message || "Parser health check returned an unexpected response.",
-    };
+
+    let message;
+    if (httpStatus === 502 || httpStatus === 503 || httpStatus === 504) {
+      message = "Parser service is still waking up.";
+    } else if (httpStatus >= 200 && httpStatus < 300) {
+      message =
+        body?.message ||
+        `Unexpected health payload (expected status "healthy", got ${JSON.stringify(bodyStatus)}).`;
+    } else {
+      message =
+        body?.message ||
+        body?.error ||
+        `Parser health check returned HTTP ${httpStatus}.`;
+    }
+
+    console.warn("[parser][health] Unavailable: %s", message);
+
+    return { status: "unavailable", message };
   } catch (err) {
-    const status = err.response?.status;
-    if (status === 502 || status === 503 || status === 504) {
+    const httpStatus = err.response?.status ?? "—";
+    const rawBody = err.response?.data;
+    const axiosCode = err.code ?? "—";
+    const axiosMessage = err.message ?? "unknown error";
+
+    console.warn(
+      "[parser][health] Error: method=%s url=%s httpStatus=%s body=%s axiosCode=%s axiosMessage=%s",
+      method,
+      healthUrl,
+      httpStatus,
+      serializeHealthLogBody(rawBody),
+      axiosCode,
+      axiosMessage
+    );
+
+    if (err.response?.status === 502 || err.response?.status === 503 || err.response?.status === 504) {
       return {
         status: "unavailable",
         message: "Parser service is still waking up.",
       };
     }
-    return {
-      status: "unavailable",
-      message: err.code === "ECONNABORTED"
+
+    const message =
+      axiosCode === "ECONNABORTED"
         ? "Parser health check timed out (service may still be waking up)."
-        : "Parser service is not reachable yet.",
-    };
+        : "Parser service is not reachable yet.";
+
+    console.warn("[parser][health] Unavailable: %s", message);
+
+    return { status: "unavailable", message };
   }
 }
 
