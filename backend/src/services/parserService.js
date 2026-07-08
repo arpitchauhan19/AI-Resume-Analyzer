@@ -4,11 +4,20 @@ const FormData = require("form-data");
 const env = require("../config/env");
 const ApiError = require("../middleware/ApiError");
 
-/** Max time to poll /health while waiting for a cold-started parser (Render ~30–60s). */
-const PARSER_WAKE_MAX_WAIT_MS = 120000;
+/** Max time to wait for a cold-started parser (Render free tier ~50–90s boot). */
+const PARSER_WAKE_MAX_WAIT_MS = 180000;
 
-/** Interval between /health polls during wake-up (avoid Render 429 rate limits). */
-const PARSER_WAKE_POLL_INTERVAL_MS = 10000;
+/** After the first wake signal, wait quietly before probing (Render boot window). */
+const PARSER_QUIET_BOOT_WAIT_MS = 55000;
+
+/** Interval between /health polls after the quiet boot wait. */
+const PARSER_WAKE_POLL_INTERVAL_MS = 15000;
+
+/** Max /parse attempts when Render returns transient cold-start errors. */
+const MAX_PARSE_ATTEMPTS = 3;
+
+/** Delay between late /parse retries when health never returned JSON. */
+const PARSER_PARSE_RETRY_DELAY_MS = 30000;
 
 /** Timeout for parser liveness probes (shorter than parse; triggers wake-up). */
 const PARSER_HEALTH_TIMEOUT_MS = 15000;
@@ -282,13 +291,36 @@ async function checkParserHealth() {
 
 /**
  * Polls parser `/health` until it reports healthy or the deadline passes.
- * Each probe triggers Render to keep booting a sleeping free-tier instance.
  *
+ * Render free tier needs ~50s to boot after the first wake signal. Probing too
+ * often returns HTML loading pages and can trigger 429 rate limits, so we wait
+ * quietly first, then check sparingly.
+ *
+ * @param {{ skipInitialProbe?: boolean }} [options]
  * @returns {Promise<boolean>} True when the parser responded healthy.
  */
-async function waitForParserReady() {
+async function waitForParserReady(options = {}) {
+  const { skipInitialProbe = false } = options;
   const deadline = Date.now() + PARSER_WAKE_MAX_WAIT_MS;
   let probe = 0;
+
+  if (!skipInitialProbe) {
+    probe += 1;
+    const initial = await checkParserHealth();
+    if (initial.status === "healthy") {
+      console.info("[parser] Parser healthy after %d wake-up probe(s).", probe);
+      return true;
+    }
+  }
+
+  const quietRemaining = Math.min(PARSER_QUIET_BOOT_WAIT_MS, deadline - Date.now());
+  if (quietRemaining > 0) {
+    console.info(
+      "[parser] Quiet boot wait %ds (Render free tier cold start)…",
+      Math.round(quietRemaining / 1000)
+    );
+    await delay(quietRemaining);
+  }
 
   while (Date.now() < deadline) {
     probe += 1;
@@ -303,7 +335,9 @@ async function waitForParserReady() {
 
     const pollInterval = health.message?.includes("rate limited")
       ? PARSER_WAKE_POLL_INTERVAL_MS * 2
-      : PARSER_WAKE_POLL_INTERVAL_MS;
+      : health.message?.includes("booting")
+        ? Math.max(PARSER_WAKE_POLL_INTERVAL_MS, 20000)
+        : PARSER_WAKE_POLL_INTERVAL_MS;
 
     await delay(Math.min(pollInterval, remaining));
   }
@@ -325,13 +359,19 @@ async function waitForParserReady() {
 function isColdStartError(err) {
   if (err.response) {
     const status = err.response.status;
+    const contentType = String(
+      err.response.headers?.["content-type"] ||
+        err.response.headers?.["Content-Type"] ||
+        ""
+    );
+    const bodyText = toHealthBodyText(err.response.data);
+    if (isRenderBootPage(contentType, bodyText)) {
+      return true;
+    }
     return status === 429 || status === 502 || status === 503 || status === 504;
   }
 
-  return (
-    err.code === "ECONNABORTED" ||
-    err.code === "ECONNRESET"
-  );
+  return err.code === "ECONNABORTED" || err.code === "ECONNRESET";
 }
 
 /**
@@ -342,9 +382,9 @@ function isColdStartError(err) {
  * stream it straight off disk into a multipart request rather than buffering
  * the whole PDF in memory.
  *
- * If the parser is waking up (common on Render free tier), polls `/health`
- * until the service is ready and retries the request once before surfacing
- * an error.
+ * If the parser is waking up (common on Render free tier), waits for the boot
+ * window, polls `/health` sparingly, and retries `/parse` before surfacing an
+ * error.
  *
  * @param {Express.Multer.File} file - The file object provided by multer.
  * @returns {Promise<object>} The parser's JSON body, e.g.
@@ -353,7 +393,7 @@ function isColdStartError(err) {
  *   failure, or a parser-reported error.
  */
 async function parseResume(file) {
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < MAX_PARSE_ATTEMPTS; attempt++) {
     const form = buildParseForm(file);
     const parseTimeout =
       attempt === 0
@@ -367,13 +407,23 @@ async function parseResume(file) {
       });
       return data;
     } catch (err) {
-      const canRetry = attempt === 0 && isColdStartError(err);
-      if (canRetry) {
-        console.info(
-          "[parser] Cold start detected; polling /health for up to %ds…",
-          PARSER_WAKE_MAX_WAIT_MS / 1000
-        );
-        await waitForParserReady();
+      const isLastAttempt = attempt >= MAX_PARSE_ATTEMPTS - 1;
+      if (!isLastAttempt && isColdStartError(err)) {
+        if (attempt === 0) {
+          console.info(
+            "[parser] Cold start detected; waiting up to %ds for parser boot…",
+            PARSER_WAKE_MAX_WAIT_MS / 1000
+          );
+          // The failed /parse above already sent a wake signal to Render.
+          await waitForParserReady({ skipInitialProbe: true });
+        } else {
+          console.info(
+            "[parser] Parse still unavailable (attempt %d/%d); waiting 30s…",
+            attempt + 1,
+            MAX_PARSE_ATTEMPTS
+          );
+          await delay(PARSER_PARSE_RETRY_DELAY_MS);
+        }
         continue;
       }
       throw normalizeParserError(err);
@@ -393,6 +443,19 @@ function normalizeParserError(err) {
   // 1. The parser responded, but with an error status (4xx/5xx).
   if (err.response) {
     const status = err.response.status;
+    const contentType = String(
+      err.response.headers?.["content-type"] ||
+        err.response.headers?.["Content-Type"] ||
+        ""
+    );
+    const bodyText = toHealthBodyText(err.response.data);
+    if (isRenderBootPage(contentType, bodyText) || isTransientHealthStatus(status)) {
+      return new ApiError(
+        503,
+        "Resume parser is still waking up. Please wait a minute and try again."
+      );
+    }
+
     const message =
       err.response.data?.error ||
       err.response.data?.message ||
