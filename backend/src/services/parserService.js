@@ -4,11 +4,17 @@ const FormData = require("form-data");
 const env = require("../config/env");
 const ApiError = require("../middleware/ApiError");
 
-/** Time to wait before retrying a parse request during a cold start. */
-const PARSER_RETRY_DELAY_MS = 25000;
+/** Max time to poll /health while waiting for a cold-started parser (Render ~30–60s). */
+const PARSER_WAKE_MAX_WAIT_MS = 90000;
+
+/** Interval between /health polls during wake-up. */
+const PARSER_WAKE_POLL_INTERVAL_MS = 5000;
 
 /** Timeout for parser liveness probes (shorter than parse; triggers wake-up). */
 const PARSER_HEALTH_TIMEOUT_MS = 15000;
+
+/** Extra headroom for the retry parse after wake-up (spaCy model load). */
+const PARSER_COLD_PARSE_TIMEOUT_MS = 90000;
 
 const parserClient = axios.create({
   baseURL: env.parserServiceUrl,
@@ -49,6 +55,8 @@ async function checkParserHealth() {
   try {
     const { data } = await parserClient.get("/health", {
       timeout: PARSER_HEALTH_TIMEOUT_MS,
+      // Render returns 502/503 while the container is booting — treat as unreachable.
+      validateStatus: (status) => status >= 200 && status < 300,
     });
     if (data?.status === "healthy") {
       return { status: "healthy" };
@@ -58,6 +66,13 @@ async function checkParserHealth() {
       message: data?.message || "Parser health check returned an unexpected response.",
     };
   } catch (err) {
+    const status = err.response?.status;
+    if (status === 502 || status === 503 || status === 504) {
+      return {
+        status: "unavailable",
+        message: "Parser service is still waking up.",
+      };
+    }
     return {
       status: "unavailable",
       message: err.code === "ECONNABORTED"
@@ -65,6 +80,37 @@ async function checkParserHealth() {
         : "Parser service is not reachable yet.",
     };
   }
+}
+
+/**
+ * Polls parser `/health` until it reports healthy or the deadline passes.
+ * Each probe triggers Render to keep booting a sleeping free-tier instance.
+ *
+ * @returns {Promise<boolean>} True when the parser responded healthy.
+ */
+async function waitForParserReady() {
+  const deadline = Date.now() + PARSER_WAKE_MAX_WAIT_MS;
+  let probe = 0;
+
+  while (Date.now() < deadline) {
+    probe += 1;
+    const health = await checkParserHealth();
+    if (health.status === "healthy") {
+      console.info("[parser] Parser healthy after %d wake-up probe(s).", probe);
+      return true;
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+
+    await delay(Math.min(PARSER_WAKE_POLL_INTERVAL_MS, remaining));
+  }
+
+  console.warn(
+    "[parser] Parser did not report healthy within %dms; retrying parse anyway.",
+    PARSER_WAKE_MAX_WAIT_MS
+  );
+  return false;
 }
 
 /**
@@ -94,8 +140,9 @@ function isColdStartError(err) {
  * stream it straight off disk into a multipart request rather than buffering
  * the whole PDF in memory.
  *
- * If the parser is waking up (common on Render free tier), waits once and
- * retries the request before surfacing an error.
+ * If the parser is waking up (common on Render free tier), polls `/health`
+ * until the service is ready and retries the request once before surfacing
+ * an error.
  *
  * @param {Express.Multer.File} file - The file object provided by multer.
  * @returns {Promise<object>} The parser's JSON body, e.g.
@@ -106,21 +153,25 @@ function isColdStartError(err) {
 async function parseResume(file) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const form = buildParseForm(file);
+    const parseTimeout =
+      attempt === 0
+        ? env.parserTimeoutMs
+        : Math.max(env.parserTimeoutMs, PARSER_COLD_PARSE_TIMEOUT_MS);
 
     try {
       const { data } = await parserClient.post("/parse", form, {
         headers: form.getHeaders(),
-        timeout: env.parserTimeoutMs,
+        timeout: parseTimeout,
       });
       return data;
     } catch (err) {
       const canRetry = attempt === 0 && isColdStartError(err);
       if (canRetry) {
         console.info(
-          "[parser] Cold start detected; retrying parse in %dms…",
-          PARSER_RETRY_DELAY_MS
+          "[parser] Cold start detected; polling /health for up to %ds…",
+          PARSER_WAKE_MAX_WAIT_MS / 1000
         );
-        await delay(PARSER_RETRY_DELAY_MS);
+        await waitForParserReady();
         continue;
       }
       throw normalizeParserError(err);
