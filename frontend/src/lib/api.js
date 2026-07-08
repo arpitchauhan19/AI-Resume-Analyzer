@@ -27,6 +27,14 @@ const api = axios.create({
 });
 
 /**
+ * Silently warm up the backend (and, transitively, the parser service) on app
+ * load. Fire-and-forget — never blocks the UI and errors are ignored.
+ */
+export function warmUpBackend() {
+  api.get("/api/health").catch(() => {});
+}
+
+/**
  * Upload a resume file to the backend parser.
  *
  * @param {File} file               The PDF selected by the user.

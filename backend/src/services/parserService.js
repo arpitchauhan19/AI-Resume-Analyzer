@@ -4,6 +4,88 @@ const FormData = require("form-data");
 const env = require("../config/env");
 const ApiError = require("../middleware/ApiError");
 
+/** Time to wait before retrying a parse request during a cold start. */
+const PARSER_RETRY_DELAY_MS = 25000;
+
+/** Timeout for parser liveness probes (shorter than parse; triggers wake-up). */
+const PARSER_HEALTH_TIMEOUT_MS = 15000;
+
+const parserClient = axios.create({
+  baseURL: env.parserServiceUrl,
+  maxContentLength: Infinity,
+  maxBodyLength: Infinity,
+});
+
+/**
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Builds a multipart body for `POST /parse`.
+ *
+ * @param {Express.Multer.File} file
+ * @returns {FormData}
+ */
+function buildParseForm(file) {
+  const form = new FormData();
+  form.append("file", fs.createReadStream(file.path), {
+    filename: file.originalname,
+    contentType: file.mimetype,
+  });
+  return form;
+}
+
+/**
+ * Pings the parser `GET /health` endpoint. Never throws — callers use this for
+ * orchestrator health checks and cold-start warm-up without failing the API.
+ *
+ * @returns {Promise<{ status: "healthy" | "unavailable", message?: string }>}
+ */
+async function checkParserHealth() {
+  try {
+    const { data } = await parserClient.get("/health", {
+      timeout: PARSER_HEALTH_TIMEOUT_MS,
+    });
+    if (data?.status === "healthy") {
+      return { status: "healthy" };
+    }
+    return {
+      status: "unavailable",
+      message: data?.message || "Parser health check returned an unexpected response.",
+    };
+  } catch (err) {
+    return {
+      status: "unavailable",
+      message: err.code === "ECONNABORTED"
+        ? "Parser health check timed out (service may still be waking up)."
+        : "Parser service is not reachable yet.",
+    };
+  }
+}
+
+/**
+ * Returns true when a failed parser request is likely due to a Render free-tier
+ * cold start rather than a client or permanent upstream error.
+ *
+ * @param {import('axios').AxiosError} err
+ * @returns {boolean}
+ */
+function isColdStartError(err) {
+  if (err.response) {
+    const status = err.response.status;
+    return status === 502 || status === 503 || status === 504;
+  }
+
+  return (
+    err.code === "ECONNABORTED" ||
+    err.code === "ECONNRESET"
+  );
+}
+
 /**
  * Forwards an uploaded resume to the Python FastAPI parser service
  * (`POST {PARSER_SERVICE_URL}/parse`) and returns the parsed JSON.
@@ -12,6 +94,9 @@ const ApiError = require("../middleware/ApiError");
  * stream it straight off disk into a multipart request rather than buffering
  * the whole PDF in memory.
  *
+ * If the parser is waking up (common on Render free tier), waits once and
+ * retries the request before surfacing an error.
+ *
  * @param {Express.Multer.File} file - The file object provided by multer.
  * @returns {Promise<object>} The parser's JSON body, e.g.
  *   `{ success: true, filename, data: { ...structured resume... } }`.
@@ -19,24 +104,27 @@ const ApiError = require("../middleware/ApiError");
  *   failure, or a parser-reported error.
  */
 async function parseResume(file) {
-  const form = new FormData();
-  // FastAPI's `/parse` expects the multipart field to be named "file".
-  form.append("file", fs.createReadStream(file.path), {
-    filename: file.originalname,
-    contentType: file.mimetype,
-  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const form = buildParseForm(file);
 
-  try {
-    const { data } = await axios.post(`${env.parserServiceUrl}/parse`, form, {
-      headers: form.getHeaders(),
-      timeout: env.parserTimeoutMs,
-      // Resume PDFs can be a few MB; don't let axios cap the body.
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-    });
-    return data;
-  } catch (err) {
-    throw normalizeParserError(err);
+    try {
+      const { data } = await parserClient.post("/parse", form, {
+        headers: form.getHeaders(),
+        timeout: env.parserTimeoutMs,
+      });
+      return data;
+    } catch (err) {
+      const canRetry = attempt === 0 && isColdStartError(err);
+      if (canRetry) {
+        console.info(
+          "[parser] Cold start detected; retrying parse in %dms…",
+          PARSER_RETRY_DELAY_MS
+        );
+        await delay(PARSER_RETRY_DELAY_MS);
+        continue;
+      }
+      throw normalizeParserError(err);
+    }
   }
 }
 
@@ -86,4 +174,4 @@ function normalizeParserError(err) {
   );
 }
 
-module.exports = { parseResume };
+module.exports = { parseResume, checkParserHealth };

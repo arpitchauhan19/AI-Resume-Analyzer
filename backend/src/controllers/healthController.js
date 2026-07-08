@@ -1,9 +1,14 @@
+const { checkParserHealth } = require("../services/parserService");
+
 /**
  * GET /api/health
- * Simple liveness probe used by clients and orchestrators.
+ * Liveness probe used by clients and orchestrators. Always returns 200 for the
+ * backend itself; includes parser status when available without failing when
+ * the parser is still waking up (Render free-tier cold start).
  */
-function getHealth(req, res) {
-  res.status(200).json({ status: "ok" });
+async function getHealth(req, res) {
+  const parser = await checkParserHealth();
+  res.status(200).json({ status: "ok", parser });
 }
 
 module.exports = { getHealth };
