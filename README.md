@@ -20,15 +20,20 @@ Built to demonstrate clean service boundaries, REST API design, deterministic NL
 ## Table of Contents
 
 - [🚀 Live Demo](#-live-demo)
+- [💡 Why This Project?](#-why-this-project)
 - [🌟 Project Highlights](#-project-highlights)
 - [✨ Features](#-features)
 - [🧱 Tech Stack](#-tech-stack)
 - [🏗️ Architecture](#️-architecture)
+- [🔄 Project Workflow](#-project-workflow)
 - [📸 Screenshots](#-screenshots)
 - [⚙️ Installation](#️-installation)
 - [📂 Repository Structure](#-repository-structure)
 - [🔌 API Endpoints](#-api-endpoints)
 - [🔐 Environment Variables](#-environment-variables)
+- [☁️ Deployment](#️-deployment)
+- [🧗 Challenges Faced](#-challenges-faced)
+- [📚 Key Learnings](#-key-learnings)
 - [🛣️ Future Improvements](#️-future-improvements)
 - [📄 License](#-license)
 
@@ -36,14 +41,30 @@ Built to demonstrate clean service boundaries, REST API design, deterministic NL
 
 ## 🚀 Live Demo
 
-| Service      | Live URL                                                                                     |
-| ------------ | -------------------------------------------------------------------------------------------- |
-| 🖥️ Frontend  | [ai-resume-frontend-fv7v.onrender.com](https://ai-resume-frontend-fv7v.onrender.com)         |
-| ⚙️ Backend   | [ai-resume-backend-m3tv.onrender.com](https://ai-resume-backend-m3tv.onrender.com)           |
-| 🧠 Parser    | [ai-resume-parser-fhdr.onrender.com](https://ai-resume-parser-fhdr.onrender.com)             |
+Try the deployed application — each service runs independently on Render:
+
+| Service | Platform | Live URL |
+| ------- | -------- | -------- |
+| 🖥️ **Frontend** | Render Static Site | [**ai-resume-frontend-fv7v.onrender.com**](https://ai-resume-frontend-fv7v.onrender.com) |
+| ⚙️ **Backend** | Render Web Service | [**ai-resume-backend-m3tv.onrender.com**](https://ai-resume-backend-m3tv.onrender.com) |
+| 🧠 **Parser** | Render Web Service | [**ai-resume-parser-fhdr.onrender.com**](https://ai-resume-parser-fhdr.onrender.com) |
 
 > [!NOTE]
 > The backend and parser are hosted on Render's free tier and may take **~30–60 seconds to wake** from cold start on the first request. Subsequent requests are fast.
+
+---
+
+## 💡 Why This Project?
+
+This project was built as a portfolio-grade full-stack application to demonstrate real-world engineering skills beyond a tutorial CRUD app:
+
+- **Full Stack Development** — end-to-end ownership from UI to API to parser to scoring engine.
+- **React + Express + FastAPI integration** — a polyglot stack with three services communicating over HTTP.
+- **REST API Design** — clean, predictable endpoints for upload, parsing, health checks, and ATS analysis.
+- **Resume Parsing** — deterministic PDF extraction using PyMuPDF, spaCy, and regex (no LLM dependency).
+- **ATS Algorithm Design** — keyword normalization, synonym matching, skill match, completeness scoring, and actionable suggestions.
+- **Microservice Architecture** — independently deployable frontend, backend, and parser services with clear boundaries.
+- **Production Deployment** — live deployment on Render with environment-driven configuration and fail-fast validation.
 
 ---
 
@@ -146,6 +167,31 @@ The system is split into three independently runnable services and flows in one 
 
 ---
 
+## 🔄 Project Workflow
+
+End-to-end flow from a user's perspective:
+
+```
+Upload Resume
+      │
+      ▼
+Backend Upload API          (POST /api/upload)
+      │
+      ▼
+FastAPI Parser              (POST /parse)
+      │
+      ▼
+Structured Resume JSON      (contact, skills, education, experience, projects)
+      │
+      ▼
+ATS Engine                  (POST /api/ats/analyze)
+      │
+      ▼
+Dashboard                   (score, matched/missing keywords, suggestions)
+```
+
+---
+
 ## 📸 Screenshots
 
 | Landing Page | Upload Flow |
@@ -169,7 +215,7 @@ The system is split into three independently runnable services and flows in one 
 Clone the repository:
 
 ```bash
-git clone https://github.com/<your-username>/AI-Resume-Analyzer.git
+git clone https://github.com/arpitchauhan19/AI-Resume-Analyzer.git
 cd AI-Resume-Analyzer
 ```
 
@@ -232,13 +278,31 @@ Then open **http://localhost:5173** in your browser.
 
 ```
 AI-Resume-Analyzer/
-│
-├── frontend/              # React + Vite client (pages, components, lib/api.js, hooks, styles)
-├── backend/              # Express API + ATS engine (server.js, app.js, config, controllers,
-│                          #   services/atsService.js, routes, middleware, models)
-├── python-service/       # FastAPI resume parser (app.py, parser.py, models.py, requirements.txt)
-├── docs/screenshots/     # README screenshots (landing, upload, dashboard, ats-match)
-└── README.md             # You are here
+├── backend/                 # Express API + ATS engine
+│   └── src/
+│       ├── server.js
+│       ├── app.js
+│       ├── config/
+│       ├── controllers/
+│       ├── services/        # uploadService, parserService, atsService
+│       ├── routes/
+│       ├── middleware/
+│       └── models/
+├── frontend/                # React + Vite client
+│   └── src/
+│       ├── pages/
+│       ├── components/
+│       ├── lib/
+│       ├── hooks/
+│       └── styles/
+├── python-service/          # FastAPI resume parser
+│   ├── app.py
+│   ├── parser.py
+│   ├── models.py
+│   └── requirements.txt
+├── docs/
+│   └── screenshots/         # landing, upload, dashboard, ats-match
+└── README.md
 ```
 
 <details>
@@ -357,6 +421,59 @@ The localhost defaults above exist purely for local development. They are
   provided before `npm run build` (e.g. `VITE_API_URL=https://api.example.com npm run build`).
   A production build with `VITE_API_URL` unset fails loudly at runtime instead
   of shipping a bundle hard-coded to `http://localhost:5000`.
+
+---
+
+## ☁️ Deployment
+
+All three services are deployed on **Render** as separate, independently scalable units:
+
+| Service | Render Type | Live URL |
+| ------- | ----------- | -------- |
+| 🖥️ **Frontend** | Static Site | [ai-resume-frontend-fv7v.onrender.com](https://ai-resume-frontend-fv7v.onrender.com) |
+| ⚙️ **Backend** | Web Service | [ai-resume-backend-m3tv.onrender.com](https://ai-resume-backend-m3tv.onrender.com) |
+| 🧠 **Parser** | Web Service | [ai-resume-parser-fhdr.onrender.com](https://ai-resume-parser-fhdr.onrender.com) |
+
+**How they connect in production:**
+
+- The **frontend** is built with `VITE_API_URL` pointing at the deployed backend URL.
+- The **backend** is configured with `PARSER_SERVICE_URL` pointing at the deployed parser URL and `CORS_ORIGIN` set to the frontend URL.
+- The **parser** runs as a standalone FastAPI service and is called by the backend over HTTP.
+
+> [!NOTE]
+> The backend and parser run on Render's **free tier**, which spins down after inactivity. The first request after idle may take **30–60 seconds** to wake up (cold start). The frontend static site is always available; only the API and parser services are affected.
+
+> [!TIP]
+> For local development, all three services run on `localhost` with the defaults documented in [Environment Variables](#-environment-variables). No code changes are needed — only environment configuration differs between dev and production.
+
+---
+
+## 🧗 Challenges Faced
+
+Building a multi-service resume analyzer surfaced several real engineering challenges:
+
+- **Designing communication between three independent services** — coordinating the React frontend, Express backend, and FastAPI parser with clear HTTP contracts and error handling.
+- **Handling PDF parsing reliably** — extracting structured data from varied resume formats using PyMuPDF, spaCy NER, and regex heuristics without an LLM.
+- **ATS keyword normalization and synonym matching** — canonicalizing skill variants (`React.js` → `react`, `REST APIs` → `restapi`), filtering generic filler words, and preventing false positives (`Java` ≠ `JavaScript`).
+- **Environment variable management** — ensuring production never silently falls back to `localhost`, with fail-fast validation on startup.
+- **Production deployment on Render** — wiring three separate services with correct CORS, build-time frontend config, and runtime backend-to-parser URLs.
+- **Cold-start handling for free-tier services** — accounting for Render's spin-down behavior where backend and parser may take 30–60 seconds to respond after idle.
+- **Backend and parser integration** — forwarding multipart file uploads from Express to FastAPI with timeouts, error propagation, and consistent JSON schemas.
+
+---
+
+## 📚 Key Learnings
+
+Through building and deploying this project end-to-end, I gained hands-on experience with:
+
+- **Building scalable REST APIs** — health checks, upload endpoints, and structured JSON responses with proper error handling.
+- **React frontend architecture** — page routing, API integration with Axios, loading states, and a component-based dashboard UI.
+- **Express backend design** — middleware pipelines, Multer file uploads, service layers, and controller separation.
+- **FastAPI microservices** — async Python APIs, Pydantic validation, and PDF parsing as a dedicated service.
+- **File upload pipelines** — multipart form handling from browser → Express → FastAPI parser.
+- **Production deployments** — deploying a polyglot stack on Render with environment-specific configuration.
+- **Environment configuration** — build-time vs. runtime variables, CORS, and production validation.
+- **ATS scoring systems** — keyword extraction, synonym normalization, skill matching, completeness checks, and weighted scoring.
 
 ---
 
