@@ -5,10 +5,10 @@ const env = require("../config/env");
 const ApiError = require("../middleware/ApiError");
 
 /** Max time to poll /health while waiting for a cold-started parser (Render ~30–60s). */
-const PARSER_WAKE_MAX_WAIT_MS = 90000;
+const PARSER_WAKE_MAX_WAIT_MS = 120000;
 
-/** Interval between /health polls during wake-up. */
-const PARSER_WAKE_POLL_INTERVAL_MS = 5000;
+/** Interval between /health polls during wake-up (avoid Render 429 rate limits). */
+const PARSER_WAKE_POLL_INTERVAL_MS = 10000;
 
 /** Timeout for parser liveness probes (shorter than parse; triggers wake-up). */
 const PARSER_HEALTH_TIMEOUT_MS = 15000;
@@ -86,6 +86,16 @@ function isRenderBootPage(contentType, bodyText) {
 
   const trimmed = bodyText.trimStart().toLowerCase();
   return trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html");
+}
+
+/**
+ * HTTP statuses that indicate the parser is not ready yet (keep polling).
+ *
+ * @param {number} httpStatus
+ * @returns {boolean}
+ */
+function isTransientHealthStatus(httpStatus) {
+  return httpStatus === 429 || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
 }
 
 /**
@@ -179,10 +189,23 @@ async function checkParserHealth() {
       };
     }
 
+    if (isTransientHealthStatus(httpStatus)) {
+      const label =
+        httpStatus === 429
+          ? "Rate limited (HTTP 429)"
+          : `Upstream unavailable (HTTP ${httpStatus})`;
+      console.info("[parser][health] Booting: %s; continuing poll.", label);
+      return {
+        status: "unavailable",
+        message:
+          httpStatus === 429
+            ? "Parser service is still booting (rate limited)."
+            : "Parser service is still waking up.",
+      };
+    }
+
     let message;
-    if (httpStatus === 502 || httpStatus === 503 || httpStatus === 504) {
-      message = "Parser service is still waking up.";
-    } else if (httpStatus >= 200 && httpStatus < 300) {
+    if (httpStatus >= 200 && httpStatus < 300) {
       message =
         body?.message ||
         `Unexpected health payload (expected JSON status "healthy", got ${JSON.stringify(bodyStatus)}).`;
@@ -231,10 +254,18 @@ async function checkParserHealth() {
       };
     }
 
-    if (err.response?.status === 502 || err.response?.status === 503 || err.response?.status === 504) {
+    if (typeof httpStatus === "number" && isTransientHealthStatus(httpStatus)) {
+      const label =
+        httpStatus === 429
+          ? "Rate limited (HTTP 429)"
+          : `Upstream unavailable (HTTP ${httpStatus})`;
+      console.info("[parser][health] Booting: %s; continuing poll.", label);
       return {
         status: "unavailable",
-        message: "Parser service is still waking up.",
+        message:
+          httpStatus === 429
+            ? "Parser service is still booting (rate limited)."
+            : "Parser service is still waking up.",
       };
     }
 
@@ -270,7 +301,11 @@ async function waitForParserReady() {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
 
-    await delay(Math.min(PARSER_WAKE_POLL_INTERVAL_MS, remaining));
+    const pollInterval = health.message?.includes("rate limited")
+      ? PARSER_WAKE_POLL_INTERVAL_MS * 2
+      : PARSER_WAKE_POLL_INTERVAL_MS;
+
+    await delay(Math.min(pollInterval, remaining));
   }
 
   console.warn(
@@ -290,7 +325,7 @@ async function waitForParserReady() {
 function isColdStartError(err) {
   if (err.response) {
     const status = err.response.status;
-    return status === 502 || status === 503 || status === 504;
+    return status === 429 || status === 502 || status === 503 || status === 504;
   }
 
   return (
@@ -365,6 +400,12 @@ function normalizeParserError(err) {
 
     // Pass client errors (bad/empty/non-PDF) through unchanged; treat the
     // parser's own server errors as an upstream (502) failure.
+    if (status === 429) {
+      return new ApiError(
+        503,
+        "Resume parser is waking up and was temporarily rate limited. Please try again in a moment."
+      );
+    }
     if (status >= 400 && status < 500) {
       return new ApiError(status, message);
     }
