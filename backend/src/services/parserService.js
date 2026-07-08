@@ -46,14 +46,13 @@ function buildParseForm(file) {
 }
 
 /**
- * Serializes a response body for structured log output.
+ * Coerces a response body to plain text for inspection.
  *
  * @param {unknown} data
  * @returns {string}
  */
-function serializeHealthLogBody(data) {
-  if (data === undefined) return "(undefined)";
-  if (data === null) return "(null)";
+function toHealthBodyText(data) {
+  if (data === undefined || data === null) return "";
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   if (typeof data === "string") return data;
   try {
@@ -64,26 +63,58 @@ function serializeHealthLogBody(data) {
 }
 
 /**
- * Normalizes the parser health JSON body regardless of axios responseType.
+ * @param {string} bodyText
+ * @param {number} [maxLen=100]
+ * @returns {string}
+ */
+function healthBodyPreview(bodyText, maxLen = 100) {
+  if (!bodyText) return "(empty)";
+  const oneLine = bodyText.replace(/\s+/g, " ").trim();
+  return oneLine.length <= maxLen ? oneLine : `${oneLine.slice(0, maxLen)}…`;
+}
+
+/**
+ * Returns true when Render (or another proxy) serves a temporary HTML boot page.
+ *
+ * @param {string} contentType
+ * @param {string} bodyText
+ * @returns {boolean}
+ */
+function isRenderBootPage(contentType, bodyText) {
+  const normalizedType = contentType.toLowerCase();
+  if (normalizedType.includes("text/html")) return true;
+
+  const trimmed = bodyText.trimStart().toLowerCase();
+  return trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html");
+}
+
+/**
+ * Parses the parser health JSON body and reports whether JSON decoding succeeded.
  *
  * @param {unknown} data
- * @returns {{ status?: string, message?: string } | null}
+ * @returns {{ body: { status?: string, message?: string } | null, jsonParseSucceeded: boolean }}
  */
-function normalizeHealthBody(data) {
+function parseHealthBody(data) {
   if (data && typeof data === "object" && !Buffer.isBuffer(data) && !Array.isArray(data)) {
-    return data;
+    return { body: data, jsonParseSucceeded: true };
   }
+
   if (typeof data === "string") {
     const trimmed = data.trim();
-    if (!trimmed) return null;
+    if (!trimmed) return { body: null, jsonParseSucceeded: false };
+
     try {
       const parsed = JSON.parse(trimmed);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return { body: parsed, jsonParseSucceeded: true };
+      }
+      return { body: null, jsonParseSucceeded: false };
     } catch {
-      return null;
+      return { body: null, jsonParseSucceeded: false };
     }
   }
-  return null;
+
+  return { body: null, jsonParseSucceeded: false };
 }
 
 /**
@@ -110,22 +141,42 @@ async function checkParserHealth() {
 
     const httpStatus = response.status;
     const rawBody = response.data;
-    const body = normalizeHealthBody(rawBody);
+    const contentType = String(
+      response.headers["content-type"] || response.headers["Content-Type"] || ""
+    );
+    const bodyText = toHealthBodyText(rawBody);
+    const { body, jsonParseSucceeded } = parseHealthBody(rawBody);
     const bodyStatus = body?.status;
+    const renderBootPage = isRenderBootPage(contentType, bodyText);
 
     console.info(
-      "[parser][health] Response: method=%s url=%s httpStatus=%s body=%s axiosCode=%s axiosMessage=%s parsedStatus=%s",
+      "[parser][health] Response: method=%s url=%s httpStatus=%s contentType=%s bodyPreview=%s jsonParseSucceeded=%s parsedStatus=%s",
       method,
       healthUrl,
       httpStatus,
-      serializeHealthLogBody(rawBody),
-      "—",
-      "—",
+      contentType || "(missing)",
+      healthBodyPreview(bodyText),
+      jsonParseSucceeded,
       bodyStatus ?? "(missing)"
     );
 
-    if (httpStatus >= 200 && httpStatus < 300 && bodyStatus === "healthy") {
+    if (
+      httpStatus >= 200 &&
+      httpStatus < 300 &&
+      jsonParseSucceeded &&
+      bodyStatus === "healthy"
+    ) {
       return { status: "healthy" };
+    }
+
+    if (renderBootPage) {
+      console.info(
+        "[parser][health] Booting: Render HTML loading page detected; continuing poll."
+      );
+      return {
+        status: "unavailable",
+        message: "Parser service is still booting.",
+      };
     }
 
     let message;
@@ -134,7 +185,7 @@ async function checkParserHealth() {
     } else if (httpStatus >= 200 && httpStatus < 300) {
       message =
         body?.message ||
-        `Unexpected health payload (expected status "healthy", got ${JSON.stringify(bodyStatus)}).`;
+        `Unexpected health payload (expected JSON status "healthy", got ${JSON.stringify(bodyStatus)}).`;
     } else {
       message =
         body?.message ||
@@ -148,18 +199,37 @@ async function checkParserHealth() {
   } catch (err) {
     const httpStatus = err.response?.status ?? "—";
     const rawBody = err.response?.data;
+    const contentType = String(
+      err.response?.headers?.["content-type"] ||
+        err.response?.headers?.["Content-Type"] ||
+        ""
+    );
+    const bodyText = toHealthBodyText(rawBody);
+    const { jsonParseSucceeded } = parseHealthBody(rawBody);
     const axiosCode = err.code ?? "—";
     const axiosMessage = err.message ?? "unknown error";
 
     console.warn(
-      "[parser][health] Error: method=%s url=%s httpStatus=%s body=%s axiosCode=%s axiosMessage=%s",
+      "[parser][health] Error: method=%s url=%s httpStatus=%s contentType=%s bodyPreview=%s jsonParseSucceeded=%s axiosCode=%s axiosMessage=%s",
       method,
       healthUrl,
       httpStatus,
-      serializeHealthLogBody(rawBody),
+      contentType || "(missing)",
+      healthBodyPreview(bodyText),
+      jsonParseSucceeded,
       axiosCode,
       axiosMessage
     );
+
+    if (isRenderBootPage(contentType, bodyText)) {
+      console.info(
+        "[parser][health] Booting: Render HTML loading page detected; continuing poll."
+      );
+      return {
+        status: "unavailable",
+        message: "Parser service is still booting.",
+      };
+    }
 
     if (err.response?.status === 502 || err.response?.status === 503 || err.response?.status === 504) {
       return {
