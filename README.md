@@ -2,47 +2,81 @@
 
 > Upload a resume, parse it into structured data, and score it against any job description with a built-in **ATS (Applicant Tracking System) engine** — no external LLM APIs required.
 
-AI Resume Analyzer is a full-stack application that turns a raw resume PDF into actionable insights. A Python microservice extracts structured data on-device, an Express backend orchestrates uploads and runs the ATS scoring engine, and a modern React dashboard visualizes the results.
-
 <p align="center">
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white">
   <img alt="Express" src="https://img.shields.io/badge/Express-4-000000?logo=express&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white">
   <img alt="MongoDB" src="https://img.shields.io/badge/MongoDB-8-47A248?logo=mongodb&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-blue">
 </p>
+
+**AI Resume Analyzer** is a production-style, microservice full-stack application that turns a raw resume PDF into actionable, recruiter-grade insights. A Python (FastAPI) microservice extracts structured data **on-device**, an Express backend orchestrates uploads and runs a purpose-built **ATS scoring engine**, and a modern React dashboard visualizes the results — score, skill match, completeness, matched/missing keywords, and concrete suggestions.
+
+Built to demonstrate clean service boundaries, REST API design, deterministic NLP parsing, and real deployment — without depending on any paid LLM API.
 
 ---
 
 ## Table of Contents
 
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Architecture](#architecture)
-- [Screenshots](#screenshots)
-- [Installation](#installation)
-- [Project Structure](#project-structure)
-- [API Endpoints](#api-endpoints)
-- [Environment Variables](#environment-variables)
-- [Future Improvements](#future-improvements)
-- [License](#license)
+- [🚀 Live Demo](#-live-demo)
+- [🌟 Project Highlights](#-project-highlights)
+- [✨ Features](#-features)
+- [🧱 Tech Stack](#-tech-stack)
+- [🏗️ Architecture](#️-architecture)
+- [📸 Screenshots](#-screenshots)
+- [⚙️ Installation](#️-installation)
+- [📂 Repository Structure](#-repository-structure)
+- [🔌 API Endpoints](#-api-endpoints)
+- [🔐 Environment Variables](#-environment-variables)
+- [🛣️ Future Improvements](#️-future-improvements)
+- [📄 License](#-license)
 
 ---
 
-## Features
+## 🚀 Live Demo
 
-- **PDF Resume Parsing** — Extracts contact details, skills, education, experience, and projects from a resume PDF using PyMuPDF + spaCy + regex (fully on-device, no LLM API calls).
-- **ATS Scoring Engine** — Compares the parsed resume against a job description and computes a real **0–100 ATS score**.
-- **Skill Match %** — Measures how many job-description keywords are explicitly backed by your resume's skills.
-- **Matched & Missing Keywords** — Surfaces exactly which job keywords you hit and which gaps to close.
-- **Resume Completeness** — Flags missing standard sections (name, email, phone, skills, education, experience, projects).
-- **Actionable Suggestions** — Generates human-readable tips to improve your match before applying.
-- **Modern Dashboard** — Animated circular score ring, progress bars, keyword tags, and a clean light/dark themeable UI.
-- **Resilient by Design** — Clean error handling across services, best-effort MongoDB persistence, and graceful empty states.
+| Service      | Live URL                                                                                     |
+| ------------ | -------------------------------------------------------------------------------------------- |
+| 🖥️ Frontend  | [ai-resume-frontend-fv7v.onrender.com](https://ai-resume-frontend-fv7v.onrender.com)         |
+| ⚙️ Backend   | [ai-resume-backend-m3tv.onrender.com](https://ai-resume-backend-m3tv.onrender.com)           |
+| 🧠 Parser    | [ai-resume-parser-fhdr.onrender.com](https://ai-resume-parser-fhdr.onrender.com)             |
+
+> [!NOTE]
+> The backend and parser are hosted on Render's free tier and may take **~30–60 seconds to wake** from cold start on the first request. Subsequent requests are fast.
 
 ---
 
-## Tech Stack
+## 🌟 Project Highlights
+
+- 🧩 **Microservice architecture** — three independently deployable services with clean HTTP boundaries.
+- ⚛️ **React + Express + FastAPI** — a polyglot stack combining a modern SPA, a Node REST API, and a Python NLP service.
+- 📄 **Resume parsing** — deterministic PDF extraction with PyMuPDF + spaCy + regex (no LLM, fully on-device).
+- 🎯 **ATS keyword analysis** — synonym-aware normalization, false-positive-safe matching, and a transparent 0–100 score.
+- 🔗 **REST APIs** — well-structured endpoints for upload, parsing, and analysis.
+- ☁️ **Render deployment** — all three services deployed and wired together in production.
+
+---
+
+## ✨ Features
+
+| Feature                       | Description                                                                                  |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| 📤 **Resume Upload**          | Drag-and-drop / file-picker upload of a resume PDF from the React UI.                         |
+| 📄 **PDF Resume Parsing**     | Extracts contact details, skills, education, experience, and projects (PyMuPDF + spaCy + regex). |
+| 🎯 **ATS Score Analysis**     | Computes a real **0–100 ATS score** for a resume against a given job description.             |
+| 🧠 **Skill Match**            | Measures how many JD keywords are explicitly backed by your resume's skills.                  |
+| ✅ **Resume Completeness**    | Flags missing standard sections (name, email, phone, skills, education, experience, projects). |
+| 🔎 **Missing Keyword Detection** | Surfaces exactly which job keywords your resume is missing.                                |
+| 💡 **Keyword Suggestions**    | Generates human-readable tips to close gaps before applying.                                 |
+| 🐍 **FastAPI Parser**         | Dedicated Python microservice for fast, deterministic PDF parsing.                            |
+| 🔌 **Express REST API**       | Node/Express backend orchestrating uploads, parsing, and ATS scoring.                         |
+| ⚛️ **Modern React UI**        | Animated score ring, progress bars, keyword tags, light/dark theming.                        |
+| 📱 **Responsive Design**      | Works cleanly across desktop, tablet, and mobile viewports.                                   |
+
+---
+
+## 🧱 Tech Stack
 
 ### Frontend
 - **React 19** + **Vite 8**
@@ -53,37 +87,52 @@ AI Resume Analyzer is a full-stack application that turns a raw resume PDF into 
 ### Backend (API + ATS Engine)
 - **Node.js** + **Express 4**
 - **Multer** for file uploads
-- **Mongoose / MongoDB** for upload metadata (optional / best-effort)
 - **Axios + form-data** to forward files to the parser
 - **Helmet**, **CORS**, **Morgan** for security & logging
 
-### Parser Microservice
+### Parser
 - **Python 3.9+** + **FastAPI** + **Uvicorn**
 - **PyMuPDF** for PDF text extraction
 - **spaCy** (`en_core_web_sm`) for NLP / name detection
 - **Pydantic** for schema validation
 
+### Database
+- **MongoDB** + **Mongoose** for upload metadata (optional / best-effort — the backend runs fine without it)
+
+### Deployment
+- **Render** — separate services for frontend (static site), backend (web service), and parser (web service)
+- Environment-driven configuration with production-safe validation (no hardcoded localhost)
+
 ---
 
-## Architecture
+## 🏗️ Architecture
 
-The system is split into three independently runnable services:
+The system is split into three independently runnable services and flows in one direction from a raw PDF to an actionable dashboard:
 
 ```
-┌──────────────┐        ┌──────────────────────────┐        ┌───────────────────────┐
-│   React UI   │  HTTP  │     Express Backend       │  HTTP  │  FastAPI Parser        │
-│  (Vite :5173)│ ─────► │        (:5000)            │ ─────► │  Microservice (:8000)  │
-│              │        │                           │        │                        │
-│  • Upload    │        │  • POST /api/upload       │        │  • POST /parse         │
-│  • Dashboard │ ◄───── │  • POST /api/ats/analyze  │ ◄───── │    (PyMuPDF + spaCy)   │
-│  • JD input  │        │    (ATS scoring engine)   │        │                        │
-└──────────────┘        └────────────┬──────────────┘        └───────────────────────┘
-                                      │
-                                      ▼
-                               ┌─────────────┐
-                               │   MongoDB   │  (upload metadata, best-effort)
-                               └─────────────┘
+              Resume PDF
+                  │
+                  ▼
+           React Frontend            (Vite SPA · upload + dashboard)
+                  │  POST /api/upload
+                  ▼
+           Express Backend           (REST API · orchestration)
+                  │  forward file → POST /parse
+                  ▼
+        FastAPI Resume Parser        (PyMuPDF + spaCy + regex)
+                  │
+                  ▼
+       Structured Resume JSON        (contact, skills, education, ...)
+                  │  POST /api/ats/analyze
+                  ▼
+             ATS Engine              (keyword match · skill match · scoring)
+                  │
+                  ▼
+              Dashboard              (score, matched/missing keywords, tips)
 ```
+
+> [!TIP]
+> Upload metadata is persisted to **MongoDB** on a best-effort basis. If the database is unavailable, parsing and ATS analysis still work — persistence is simply skipped.
 
 **Request flow:**
 
@@ -93,13 +142,11 @@ The system is split into three independently runnable services:
 4. On the dashboard, the user pastes a **job description** → `POST /api/ats/analyze`.
 5. The Express **ATS engine** scores the parsed resume against the job description and returns the score, matched/missing keywords, completeness, and suggestions.
 
-> The ATS engine (`backend/src/services/atsService.js`) is pure, dependency-free, and modular — keyword extraction, matching, skill match, completeness, scoring, and suggestions are each isolated, testable functions.
+> The ATS engine (`backend/src/services/atsService.js`) is pure, dependency-free, and modular — keyword extraction, normalization, matching, skill match, completeness, scoring, and suggestions are each isolated, testable functions.
 
 ---
 
-## Screenshots
-
-> Replace these placeholders with real screenshots once captured.
+## 📸 Screenshots
 
 | Landing Page | Upload Flow |
 | --- | --- |
@@ -111,7 +158,7 @@ The system is split into three independently runnable services:
 
 ---
 
-## Installation
+## ⚙️ Installation
 
 ### Prerequisites
 
@@ -128,7 +175,7 @@ cd AI-Resume-Analyzer
 
 You'll run **three** services. Open three terminals (one per service).
 
-### 1. Python Parser Service
+### 1. Python Parser
 
 ```bash
 cd python-service
@@ -170,6 +217,9 @@ cd frontend
 
 npm install
 
+# Configure environment (optional in dev; required for production builds)
+cp .env.example .env   # Windows: copy .env.example .env
+
 # Run the Vite dev server on http://localhost:5173
 npm run dev
 ```
@@ -178,7 +228,21 @@ Then open **http://localhost:5173** in your browser.
 
 ---
 
-## Project Structure
+## 📂 Repository Structure
+
+```
+AI-Resume-Analyzer/
+│
+├── frontend/              # React + Vite client (pages, components, lib/api.js, hooks, styles)
+├── backend/              # Express API + ATS engine (server.js, app.js, config, controllers,
+│                          #   services/atsService.js, routes, middleware, models)
+├── python-service/       # FastAPI resume parser (app.py, parser.py, models.py, requirements.txt)
+├── docs/screenshots/     # README screenshots (landing, upload, dashboard, ats-match)
+└── README.md             # You are here
+```
+
+<details>
+<summary>Expand for the detailed per-service layout</summary>
 
 ```
 AI-Resume-Analyzer/
@@ -209,17 +273,19 @@ AI-Resume-Analyzer/
     └── requirements.txt          # Pinned Python dependencies
 ```
 
+</details>
+
 ---
 
-## API Endpoints
+## 🔌 API Endpoints
 
 ### Express Backend (`http://localhost:5000`)
 
-| Method | Endpoint            | Description                                                    |
-| ------ | ------------------- | ------------------------------------------------------------- |
-| `GET`  | `/api/health`       | Liveness probe → `{ "status": "ok" }`                         |
-| `POST` | `/api/upload`       | Upload a resume PDF (multipart field `resume`); returns parsed resume JSON |
-| `POST` | `/api/ats/analyze`  | Score a parsed resume against a job description (ATS engine)   |
+| Method | Endpoint            | Description                                                                 |
+| ------ | ------------------- | --------------------------------------------------------------------------- |
+| `GET`  | `/api/health`       | Liveness probe → `{ "status": "ok" }`                                       |
+| `POST` | `/api/upload`       | Upload a resume PDF (multipart field `resume`); returns parsed resume JSON   |
+| `POST` | `/api/ats/analyze`  | Score a parsed resume against a job description (ATS engine)                 |
 
 **`POST /api/ats/analyze`**
 
@@ -239,7 +305,7 @@ Response:
   "success": true,
   "atsScore": 72,
   "skillMatch": 60,
-  "matchedKeywords": ["node.js", "express", "rest"],
+  "matchedKeywords": ["node", "express", "restapi"],
   "missingKeywords": ["postgresql", "docker", "aws"],
   "resumeCompleteness": 86,
   "suggestions": ["Incorporate these job-description keywords: postgresql, docker, aws.", "..."]
@@ -257,7 +323,7 @@ Response:
 
 ---
 
-## Environment Variables
+## 🔐 Environment Variables
 
 Backend (`backend/.env` — see `backend/.env.example`):
 
@@ -294,7 +360,7 @@ The localhost defaults above exist purely for local development. They are
 
 ---
 
-## Future Improvements
+## 🛣️ Future Improvements
 
 - **OCR support** for scanned / image-only PDFs (e.g. Tesseract).
 - **DOCX parsing** in addition to PDF.
@@ -308,6 +374,12 @@ The localhost defaults above exist purely for local development. They are
 
 ---
 
-## License
+## 📄 License
 
-This project is licensed under the **MIT License**.
+This project is licensed under the **MIT License** — you are free to use, modify, and distribute it with attribution.
+
+---
+
+<p align="center">
+  <sub>Built with ⚛️ React, ⚙️ Express, and 🐍 FastAPI — deployed on Render.</sub>
+</p>
