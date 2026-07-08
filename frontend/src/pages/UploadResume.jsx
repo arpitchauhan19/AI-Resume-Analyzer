@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/ui.css";
 import "../styles/Upload.css";
@@ -7,7 +7,7 @@ import FileDropzone from "../components/FileDropzone";
 import SelectedFileCard from "../components/SelectedFileCard";
 import Button from "../components/Button";
 import { ArrowRightIcon, AlertIcon } from "../components/icons";
-import { uploadResume, getErrorMessage } from "../lib/api";
+import { uploadResume, getErrorMessage, warmUpBackend } from "../lib/api";
 
 /*
  * Resume upload page.
@@ -25,6 +25,11 @@ function UploadResume() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
+
+  // Extra wake signal while the user picks a file (parser boot takes ~50–60s).
+  useEffect(() => {
+    warmUpBackend();
+  }, []);
 
   function handleSelect(selected) {
     setFile(selected);

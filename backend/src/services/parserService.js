@@ -4,20 +4,11 @@ const FormData = require("form-data");
 const env = require("../config/env");
 const ApiError = require("../middleware/ApiError");
 
-/** Max time to wait for a cold-started parser (Render free tier ~50–90s boot). */
-const PARSER_WAKE_MAX_WAIT_MS = 180000;
-
-/** After the first wake signal, wait quietly before probing (Render boot window). */
-const PARSER_QUIET_BOOT_WAIT_MS = 55000;
-
-/** Interval between /health polls after the quiet boot wait. */
-const PARSER_WAKE_POLL_INTERVAL_MS = 15000;
+/** Delays before each cold-start /parse retry (ms). Render free tier boots in ~50–60s. */
+const COLD_START_PARSE_DELAYS_MS = [65000, 50000, 50000];
 
 /** Max /parse attempts when Render returns transient cold-start errors. */
-const MAX_PARSE_ATTEMPTS = 3;
-
-/** Delay between late /parse retries when health never returned JSON. */
-const PARSER_PARSE_RETRY_DELAY_MS = 30000;
+const MAX_PARSE_ATTEMPTS = COLD_START_PARSE_DELAYS_MS.length + 1;
 
 /** Timeout for parser liveness probes (shorter than parse; triggers wake-up). */
 const PARSER_HEALTH_TIMEOUT_MS = 15000;
@@ -290,66 +281,6 @@ async function checkParserHealth() {
 }
 
 /**
- * Polls parser `/health` until it reports healthy or the deadline passes.
- *
- * Render free tier needs ~50s to boot after the first wake signal. Probing too
- * often returns HTML loading pages and can trigger 429 rate limits, so we wait
- * quietly first, then check sparingly.
- *
- * @param {{ skipInitialProbe?: boolean }} [options]
- * @returns {Promise<boolean>} True when the parser responded healthy.
- */
-async function waitForParserReady(options = {}) {
-  const { skipInitialProbe = false } = options;
-  const deadline = Date.now() + PARSER_WAKE_MAX_WAIT_MS;
-  let probe = 0;
-
-  if (!skipInitialProbe) {
-    probe += 1;
-    const initial = await checkParserHealth();
-    if (initial.status === "healthy") {
-      console.info("[parser] Parser healthy after %d wake-up probe(s).", probe);
-      return true;
-    }
-  }
-
-  const quietRemaining = Math.min(PARSER_QUIET_BOOT_WAIT_MS, deadline - Date.now());
-  if (quietRemaining > 0) {
-    console.info(
-      "[parser] Quiet boot wait %ds (Render free tier cold start)…",
-      Math.round(quietRemaining / 1000)
-    );
-    await delay(quietRemaining);
-  }
-
-  while (Date.now() < deadline) {
-    probe += 1;
-    const health = await checkParserHealth();
-    if (health.status === "healthy") {
-      console.info("[parser] Parser healthy after %d wake-up probe(s).", probe);
-      return true;
-    }
-
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-
-    const pollInterval = health.message?.includes("rate limited")
-      ? PARSER_WAKE_POLL_INTERVAL_MS * 2
-      : health.message?.includes("booting")
-        ? Math.max(PARSER_WAKE_POLL_INTERVAL_MS, 20000)
-        : PARSER_WAKE_POLL_INTERVAL_MS;
-
-    await delay(Math.min(pollInterval, remaining));
-  }
-
-  console.warn(
-    "[parser] Parser did not report healthy within %dms; retrying parse anyway.",
-    PARSER_WAKE_MAX_WAIT_MS
-  );
-  return false;
-}
-
-/**
  * Returns true when a failed parser request is likely due to a Render free-tier
  * cold start rather than a client or permanent upstream error.
  *
@@ -382,9 +313,9 @@ function isColdStartError(err) {
  * stream it straight off disk into a multipart request rather than buffering
  * the whole PDF in memory.
  *
- * If the parser is waking up (common on Render free tier), waits for the boot
- * window, polls `/health` sparingly, and retries `/parse` before surfacing an
- * error.
+ * If the parser is waking up (common on Render free tier), the first failed
+ * `/parse` wakes the instance, then retries with fixed delays — no health
+ * polling (avoids Render 429 rate limits during boot).
  *
  * @param {Express.Multer.File} file - The file object provided by multer.
  * @returns {Promise<object>} The parser's JSON body, e.g.
@@ -409,21 +340,14 @@ async function parseResume(file) {
     } catch (err) {
       const isLastAttempt = attempt >= MAX_PARSE_ATTEMPTS - 1;
       if (!isLastAttempt && isColdStartError(err)) {
-        if (attempt === 0) {
-          console.info(
-            "[parser] Cold start detected; waiting up to %ds for parser boot…",
-            PARSER_WAKE_MAX_WAIT_MS / 1000
-          );
-          // The failed /parse above already sent a wake signal to Render.
-          await waitForParserReady({ skipInitialProbe: true });
-        } else {
-          console.info(
-            "[parser] Parse still unavailable (attempt %d/%d); waiting 30s…",
-            attempt + 1,
-            MAX_PARSE_ATTEMPTS
-          );
-          await delay(PARSER_PARSE_RETRY_DELAY_MS);
-        }
+        const waitMs = COLD_START_PARSE_DELAYS_MS[attempt];
+        console.info(
+          "[parser] Cold start (attempt %d/%d); waiting %ds before /parse retry…",
+          attempt + 1,
+          MAX_PARSE_ATTEMPTS,
+          Math.round(waitMs / 1000)
+        );
+        await delay(waitMs);
         continue;
       }
       throw normalizeParserError(err);
