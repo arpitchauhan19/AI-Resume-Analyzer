@@ -4,17 +4,28 @@ const FormData = require("form-data");
 const env = require("../config/env");
 const ApiError = require("../middleware/ApiError");
 
-/** Delays before each cold-start /parse retry (ms). Render free tier boots in ~50–60s. */
-const COLD_START_PARSE_DELAYS_MS = [65000, 50000, 50000];
+/**
+ * Delays before each cold-start /parse retry (ms).
+ *
+ * Kept short and few: every request uses a long timeout so Render can HOLD the
+ * connection during the free-tier cold boot and return the real result in one
+ * shot (like a browser visiting /health). Firing many quick requests instead
+ * trips Render's edge rate limiter (HTTP 429), which delays the boot.
+ */
+const COLD_START_PARSE_DELAYS_MS = [20000];
 
 /** Max /parse attempts when Render returns transient cold-start errors. */
 const MAX_PARSE_ATTEMPTS = COLD_START_PARSE_DELAYS_MS.length + 1;
 
-/** Timeout for parser liveness probes (shorter than parse; triggers wake-up). */
-const PARSER_HEALTH_TIMEOUT_MS = 15000;
+/** Timeout for parser liveness probes (long enough for Render to hold a cold-boot connection). */
+const PARSER_HEALTH_TIMEOUT_MS = 60000;
 
-/** Extra headroom for the retry parse after wake-up (spaCy model load). */
-const PARSER_COLD_PARSE_TIMEOUT_MS = 90000;
+/**
+ * Timeout for every /parse request. Long enough that Render holds the
+ * connection through a free-tier cold boot (~50–60s) plus the spaCy model load
+ * on the first parse, rather than axios giving up early.
+ */
+const PARSER_COLD_PARSE_TIMEOUT_MS = 120000;
 
 const parserClient = axios.create({
   baseURL: env.parserServiceUrl,
@@ -324,12 +335,13 @@ function isColdStartError(err) {
  *   failure, or a parser-reported error.
  */
 async function parseResume(file) {
+  // Every attempt uses a long timeout so Render can hold the connection open
+  // through a cold boot and return the real response, instead of us bursting
+  // requests (which triggers Render's 429 rate limiter).
+  const parseTimeout = Math.max(env.parserTimeoutMs, PARSER_COLD_PARSE_TIMEOUT_MS);
+
   for (let attempt = 0; attempt < MAX_PARSE_ATTEMPTS; attempt++) {
     const form = buildParseForm(file);
-    const parseTimeout =
-      attempt === 0
-        ? env.parserTimeoutMs
-        : Math.max(env.parserTimeoutMs, PARSER_COLD_PARSE_TIMEOUT_MS);
 
     try {
       const { data } = await parserClient.post("/parse", form, {

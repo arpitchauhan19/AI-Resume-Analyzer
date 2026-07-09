@@ -29,35 +29,16 @@ const api = axios.create({
 /** Allow enough time for a cold Render backend to wake on the first probe. */
 const WARMUP_TIMEOUT_MS = 90000;
 
-/** Retry interval when the backend itself is still waking up. */
-const WARMUP_RETRY_DELAY_MS = 15000;
-
-/** Max warmup attempts (covers a cold backend + cold parser boot window). */
-const WARMUP_MAX_ATTEMPTS = 4;
-
 /**
  * Silently warm up the backend and parser on app load.
  * Fire-and-forget — never blocks the UI and errors are ignored.
  *
- * Uses /api/warmup (instant 200 + background parser ping) instead of
- * /api/health so a cold backend can respond quickly and start waking the
- * parser while the user reads the landing page.
+ * Uses /api/warmup (instant 200 + a single background parser ping). We send
+ * ONE patient request rather than retrying: bursts of requests trip Render's
+ * free-tier edge rate limiter (HTTP 429) and actually slow the cold boot.
  */
 export function warmUpBackend() {
-  let attempt = 0;
-
-  function run() {
-    api
-      .get("/api/warmup", { timeout: WARMUP_TIMEOUT_MS })
-      .catch(() => {
-        attempt += 1;
-        if (attempt < WARMUP_MAX_ATTEMPTS) {
-          setTimeout(run, WARMUP_RETRY_DELAY_MS);
-        }
-      });
-  }
-
-  run();
+  api.get("/api/warmup", { timeout: WARMUP_TIMEOUT_MS }).catch(() => {});
 }
 
 /**
