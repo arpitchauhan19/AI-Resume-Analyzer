@@ -21,6 +21,23 @@ const MAX_PARSE_ATTEMPTS = COLD_START_PARSE_DELAYS_MS.length + 1;
 const PARSER_HEALTH_TIMEOUT_MS = 60000;
 
 /**
+ * Total time budget for waking the parser with GET /health BEFORE sending the
+ * (large) multipart /parse body. A GET is exactly what "opening the parser link
+ * in the browser" does — it reliably triggers Render's free-tier cold boot, and
+ * Render holds the connection open while the service starts. We keep polling
+ * until the parser reports healthy or this budget is exhausted.
+ */
+const PARSER_WAKE_BUDGET_MS = 150000;
+
+/**
+ * Delay between wake (health) attempts when the parser is not ready yet. Kept
+ * moderate so we don't hammer Render's edge (which returns HTTP 429 and slows
+ * the boot); each health attempt itself can hold for up to
+ * {@link PARSER_HEALTH_TIMEOUT_MS} during a cold boot.
+ */
+const PARSER_WAKE_POLL_INTERVAL_MS = 5000;
+
+/**
  * Timeout for every /parse request. Long enough that Render holds the
  * connection through a free-tier cold boot (~50–60s) plus the spaCy model load
  * on the first parse, rather than axios giving up early.
@@ -317,6 +334,48 @@ function isColdStartError(err) {
 }
 
 /**
+ * Wakes the parser (and waits until it reports healthy) BEFORE the caller sends
+ * the large multipart /parse body. This mirrors "opening the parser URL in the
+ * browser": a lightweight GET /health triggers Render's cold boot, and Render
+ * holds the connection open while the FastAPI process starts.
+ *
+ * Never throws — on timeout it resolves `false` and the caller still attempts
+ * /parse (which has its own long timeout and retry) so a slow-but-alive parser
+ * is never blocked from serving the request.
+ *
+ * @returns {Promise<boolean>} `true` if the parser reported healthy in time.
+ */
+async function waitForParserAwake() {
+  const deadline = Date.now() + PARSER_WAKE_BUDGET_MS;
+  let attempt = 0;
+
+  while (Date.now() < deadline) {
+    attempt += 1;
+    const health = await checkParserHealth();
+
+    if (health.status === "healthy") {
+      if (attempt > 1) {
+        console.info("[parser] Parser awake after %d health attempt(s).", attempt);
+      }
+      return true;
+    }
+
+    if (Date.now() >= deadline) break;
+    console.info(
+      "[parser] Parser still waking (attempt %d); retrying health in %ds…",
+      attempt,
+      Math.round(PARSER_WAKE_POLL_INTERVAL_MS / 1000)
+    );
+    await delay(PARSER_WAKE_POLL_INTERVAL_MS);
+  }
+
+  console.warn(
+    "[parser] Parser did not report healthy within wake budget; attempting /parse anyway."
+  );
+  return false;
+}
+
+/**
  * Forwards an uploaded resume to the Python FastAPI parser service
  * (`POST {PARSER_SERVICE_URL}/parse`) and returns the parsed JSON.
  *
@@ -324,9 +383,10 @@ function isColdStartError(err) {
  * stream it straight off disk into a multipart request rather than buffering
  * the whole PDF in memory.
  *
- * If the parser is waking up (common on Render free tier), the first failed
- * `/parse` wakes the instance, then retries with fixed delays — no health
- * polling (avoids Render 429 rate limits during boot).
+ * To survive Render free-tier cold starts, we first WAKE the parser with a
+ * patient GET /health poll (exactly what visiting the URL in a browser does),
+ * then POST /parse with a long timeout and a short retry for any residual
+ * transient boot errors.
  *
  * @param {Express.Multer.File} file - The file object provided by multer.
  * @returns {Promise<object>} The parser's JSON body, e.g.
@@ -335,9 +395,14 @@ function isColdStartError(err) {
  *   failure, or a parser-reported error.
  */
 async function parseResume(file) {
-  // Every attempt uses a long timeout so Render can hold the connection open
-  // through a cold boot and return the real response, instead of us bursting
-  // requests (which triggers Render's 429 rate limiter).
+  // 1) Make sure the parser is awake before streaming the (large) PDF body.
+  //    A cold POST /parse often gets a fast 502/boot page from Render before the
+  //    service is up; waking via GET /health first avoids that failure mode.
+  await waitForParserAwake();
+
+  // 2) Every /parse attempt uses a long timeout so Render can hold the
+  //    connection open through the tail end of a cold boot plus the first-call
+  //    spaCy model load, instead of axios giving up early.
   const parseTimeout = Math.max(env.parserTimeoutMs, PARSER_COLD_PARSE_TIMEOUT_MS);
 
   for (let attempt = 0; attempt < MAX_PARSE_ATTEMPTS; attempt++) {
@@ -432,4 +497,4 @@ function normalizeParserError(err) {
   );
 }
 
-module.exports = { parseResume, checkParserHealth };
+module.exports = { parseResume, checkParserHealth, waitForParserAwake };

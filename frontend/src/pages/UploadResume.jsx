@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/ui.css";
 import "../styles/Upload.css";
@@ -7,7 +7,7 @@ import FileDropzone from "../components/FileDropzone";
 import SelectedFileCard from "../components/SelectedFileCard";
 import Button from "../components/Button";
 import { ArrowRightIcon, AlertIcon } from "../components/icons";
-import { uploadResume, getErrorMessage } from "../lib/api";
+import { uploadResume, warmUpBackend, getErrorMessage } from "../lib/api";
 
 /*
  * Resume upload page.
@@ -26,10 +26,19 @@ function UploadResume() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
 
+  // Start waking the (Render free-tier) parser as soon as the user lands on the
+  // upload page, so it has a head start on its cold boot before they hit Analyze.
+  useEffect(() => {
+    warmUpBackend();
+  }, []);
+
   function handleSelect(selected) {
     setFile(selected);
     setError("");
     setProgress(0);
+    // Picking a file is a strong signal an upload is imminent — nudge the parser
+    // awake again in case it spun back down since page load.
+    warmUpBackend();
   }
 
   function handleRemove() {
