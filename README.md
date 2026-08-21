@@ -443,6 +443,15 @@ All three services are deployed on **Render** as separate, independently scalabl
 > [!NOTE]
 > The backend and parser run on Render's **free tier**, which spins down after inactivity. The first request after idle may take **30–60 seconds** to wake up (cold start). The frontend static site is always available; only the API and parser services are affected.
 
+### Keeping free-tier services warm
+
+[`.github/workflows/keep-warm.yml`](.github/workflows/keep-warm.yml) hits both `/health` endpoints every 10 minutes so Render doesn't sleep the parser/backend. Pings wait up to ~150s for cold boots. You can change URLs with repo Variables `PARSER_URL` / `BACKEND_URL`.
+
+On startup the parser also loads spaCy in the background, so `/health` comes up first and the first `/parse` isn't stuck loading the model.
+
+> [!TIP]
+> If you use UptimeRobot (or similar), set the request timeout to 60s+. Shorter timeouts fail mid-boot and don't actually keep the service warm.
+
 > [!TIP]
 > For local development, all three services run on `localhost` with the defaults documented in [Environment Variables](#-environment-variables). No code changes are needed — only environment configuration differs between dev and production.
 

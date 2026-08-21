@@ -64,6 +64,11 @@ def _get_nlp():
     return _NLP
 
 
+def warmup() -> None:
+    """Load spaCy once at startup so the first /parse isn't slow."""
+    _get_nlp()
+
+
 # ---------------------------------------------------------------------------
 # Regex patterns and keyword dictionaries
 # ---------------------------------------------------------------------------

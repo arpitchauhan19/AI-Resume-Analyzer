@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, File, UploadFile
@@ -27,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from models import ErrorResponse, ParseResponse
-from parser import parse_resume
+from parser import parse_resume, warmup
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("resume_parser.app")
@@ -38,10 +40,26 @@ os.makedirs(EXTRACTED_DIR, exist_ok=True)
 
 MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB upload cap
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load spaCy in the background so /health can respond during cold start.
+    def _background_warmup() -> None:
+        try:
+            warmup()
+            logger.info("spaCy model preloaded.")
+        except Exception as exc:
+            logger.warning("Model preload failed, will load on first parse: %s", exc)
+
+    threading.Thread(target=_background_warmup, name="spacy-warmup", daemon=True).start()
+    yield
+
+
 app = FastAPI(
     title="AI Resume Analyzer - Python Parser Service",
     description="Extracts structured data from resume PDFs using PyMuPDF + spaCy.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Allow the React frontend / Express backend to call this service in dev.
