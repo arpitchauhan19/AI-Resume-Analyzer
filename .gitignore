@@ -20,7 +20,6 @@ python-service/extracted/*.json
 .vscode/
 .idea/
 
-# Leftover / personal
+# Local leftovers
 ss/
-*Study_Guide*.pdf
 *.zip
