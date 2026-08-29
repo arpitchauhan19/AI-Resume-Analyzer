@@ -543,41 +543,86 @@ def _ends_sentence(text: str) -> bool:
     return text.rstrip().endswith((".", "!", "?"))
 
 
-def extract_projects(sections: Dict[str, str]) -> List[str]:
-    """Group the projects block conservatively into one item per project.
+# Lines that start with an action verb are descriptions, not project titles
+# ("Built a parser" must never become its own project).
+_PROJECT_VERB_RE = re.compile(
+    r"^(built|build|implemented|developed|created|designed|deployed|added|"
+    r"integrated|worked|used|led|managed|improved|optimized|configured|"
+    r"wrote|handled|enabled|automated|refactored|engineered|"
+    r"architected|delivered|launched|maintained|tested|fixed|resolved|"
+    r"collaborated|contributed|achieved|increased|reduced|migrated|"
+    r"tracked|parsed|scored|extracted)\b",
+    re.IGNORECASE,
+)
 
-    A new project starts only on a strong signal — a bullet marker, a
-    "Title - description" separator, or a short Title-Case title line that
-    follows a completed sentence. Wrapped description lines attach to the
-    current project instead of each becoming its own item, which fixes the
-    "projects extraction is too aggressive" behaviour.
+
+def _looks_like_tech_stack(text: str) -> bool:
+    """True for a comma-separated skill list sitting under a project title.
+
+    ``Title | React, Node`` is a header (has a title separator), not a stack
+    row. Only a bare comma list such as ``React, Express, FastAPI`` counts.
+    """
+
+    if _TITLE_SEPARATOR_RE.search(text):
+        return False
+    chunks = [c.strip() for c in text.split(",") if c.strip()]
+    if len(chunks) < 2:
+        return False
+    return all(1 <= len(chunk.split()) <= 3 for chunk in chunks)
+
+
+def _is_project_header(clean: str, was_bullet: bool) -> bool:
+    """Decide whether a line starts a *new* project rather than describing one.
+
+    Real resumes almost always look like::
+
+        Title | stack
+        • description bullet
+        • another bullet
+
+    Treating every bullet as a new project is what produced 7–9 fake entries
+    from 2 real ones. Description bullets therefore attach to the current
+    project. A new project starts only on a title-like line.
+    """
+
+    if _looks_like_tech_stack(clean) or _PROJECT_VERB_RE.match(clean):
+        return False
+
+    has_separator = bool(_TITLE_SEPARATOR_RE.search(clean))
+    starts_upper = clean[:1].isupper()
+    words = clean.split()
+    short_title = (
+        starts_upper
+        and not _ends_sentence(clean)
+        and 1 <= len(words) <= 8
+    )
+
+    if was_bullet:
+        # "• PlaceTrack — placement tracker" is a titled project.
+        # "• Built the upload pipeline" is a description of the current one.
+        return has_separator and starts_upper and len(words) <= 16
+
+    return has_separator or short_title
+
+
+def extract_projects(sections: Dict[str, str]) -> List[str]:
+    """Group the projects block into one item per real project.
+
+    A new project starts only on a title signal — ``Title | stack``,
+    ``Title - description``, or a short Title-Case header. Bullet points and
+    wrapped description / tech-stack lines attach to the current project.
     """
 
     lines = _iter_clean_lines(sections.get("projects", ""))
     entries: List[str] = []
     current: List[str] = []
-    prev_clean: Optional[str] = None
-    prev_bullet = False
 
     for clean, was_bullet in lines:
-        starts_upper = clean[:1].isupper()
-        has_separator = bool(_TITLE_SEPARATOR_RE.search(clean))
-        short_title = (
-            starts_upper
-            and not _ends_sentence(clean)
-            and len(clean.split()) <= 8
-            and (prev_clean is None or prev_bullet or _ends_sentence(prev_clean))
-        )
-        is_new = was_bullet or has_separator or short_title
-
-        if current and is_new:
+        if current and _is_project_header(clean, was_bullet):
             entries.append(" ".join(current))
             current = [clean]
         else:
             current.append(clean)
-
-        prev_clean = clean
-        prev_bullet = was_bullet
 
     if current:
         entries.append(" ".join(current))
