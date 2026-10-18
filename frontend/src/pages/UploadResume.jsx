@@ -7,7 +7,12 @@ import FileDropzone from "../components/FileDropzone";
 import SelectedFileCard from "../components/SelectedFileCard";
 import Button from "../components/Button";
 import { ArrowRightIcon, AlertIcon } from "../components/icons";
-import { uploadResume, warmUpBackend, getErrorMessage } from "../lib/api";
+import {
+  uploadResume,
+  warmUpBackend,
+  checkParserReadiness,
+  getErrorMessage,
+} from "../lib/api";
 
 /*
  * Resume upload page.
@@ -25,12 +30,51 @@ function UploadResume() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Server readiness status: "checking" | "ready" | "warming"
+  const [parserStatus, setParserStatus] = useState("checking");
 
   // Start waking the (Render free-tier) parser as soon as the user lands on the
-  // upload page, so it has a head start on its cold boot before they hit Analyze.
+  // upload page, and poll readiness until it reports ready.
   useEffect(() => {
     warmUpBackend();
-  }, []);
+
+    let isMounted = true;
+    async function pollStatus() {
+      const res = await checkParserReadiness();
+      if (!isMounted) return;
+      if (res.ready) {
+        setParserStatus("ready");
+      } else {
+        setParserStatus("warming");
+      }
+    }
+
+    pollStatus();
+    const interval = setInterval(() => {
+      if (parserStatus !== "ready") {
+        pollStatus();
+      }
+    }, 5000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [parserStatus]);
+
+  // Track upload / cold-start time while request is in flight
+  useEffect(() => {
+    if (!uploading) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [uploading]);
 
   function handleSelect(selected) {
     setFile(selected);
@@ -53,6 +97,7 @@ function UploadResume() {
     setUploading(true);
     setError("");
     setProgress(0);
+    setElapsedSeconds(0);
 
     try {
       const payload = await uploadResume(file, setProgress);
@@ -86,6 +131,21 @@ function UploadResume() {
               Drop your resume below and our AI will score it against ATS
               systems, surface missing keywords and suggest improvements.
             </p>
+            <div
+              className="upload__server-status"
+              title="Render free tier automatically sleeps after 15m of inactivity"
+            >
+              <span
+                className={`upload__status-dot upload__status-dot--${
+                  parserStatus === "ready" ? "ready" : "warming"
+                }`}
+              />
+              <span>
+                {parserStatus === "ready"
+                  ? "AI Engine Online & Ready"
+                  : "Waking up AI Engine (Render free tier cold start ~45s)..."}
+              </span>
+            </div>
           </div>
 
           <div className="upload__panel">
@@ -106,7 +166,9 @@ function UploadResume() {
                   <span>
                     {progress < 100
                       ? `Uploading… ${progress}%`
-                      : "Parsing your resume…"}
+                      : elapsedSeconds > 6
+                      ? "Waking up AI Engine on Render (~30–60s cold start)…"
+                      : "Parsing your resume with AI…"}
                   </span>
                 </div>
                 <div
@@ -121,6 +183,11 @@ function UploadResume() {
                     style={{ width: `${progress}%` }}
                   />
                 </div>
+                {elapsedSeconds > 6 && (
+                  <p className="upload__cold-start-hint">
+                    Render free-tier instances sleep when idle. Your resume is being processed and will display automatically once booted!
+                  </p>
+                )}
               </div>
             )}
 

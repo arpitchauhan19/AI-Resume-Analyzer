@@ -22,6 +22,8 @@ if (!configuredApiUrl && import.meta.env.PROD) {
   );
 }
 
+const configuredParserUrl = import.meta.env.VITE_PARSER_URL?.trim();
+
 const api = axios.create({
   baseURL: configuredApiUrl || "http://localhost:5000",
 });
@@ -33,12 +35,39 @@ const WARMUP_TIMEOUT_MS = 90000;
  * Silently warm up the backend and parser on app load.
  * Fire-and-forget — never blocks the UI and errors are ignored.
  *
- * Uses /api/warmup (instant 200 + a single background parser ping). We send
- * ONE patient request rather than retrying: bursts of requests trip Render's
- * free-tier edge rate limiter (HTTP 429) and actually slow the cold boot.
+ * 1. Pings the backend's /api/warmup (which triggers background parser wake).
+ * 2. If VITE_PARSER_URL is set, also fires a direct browser request to the
+ *    parser's /health endpoint. This triggers Render's cold-boot container
+ *    directly from the browser, exactly like opening the URL in another tab.
  */
 export function warmUpBackend() {
   api.get("/api/warmup", { timeout: WARMUP_TIMEOUT_MS }).catch(() => {});
+
+  if (configuredParserUrl) {
+    try {
+      fetch(`${configuredParserUrl}/health`, { mode: "no-cors" }).catch(() => {});
+    } catch {
+      // Ignore network errors on background probe
+    }
+  }
+}
+
+/**
+ * Quick, non-blocking check to determine if the parser is known to be ready.
+ *
+ * @returns {Promise<{ ok: boolean, ready: boolean, warmingUp: boolean }>}
+ */
+export async function checkParserReadiness() {
+  try {
+    const res = await api.get("/api/warmup", { timeout: 10000 });
+    return {
+      ok: res.data?.status === "ok",
+      ready: Boolean(res.data?.parserReady),
+      warmingUp: Boolean(res.data?.warmingUp),
+    };
+  } catch {
+    return { ok: false, ready: false, warmingUp: false };
+  }
 }
 
 /**

@@ -44,6 +44,20 @@ const PARSER_WAKE_POLL_INTERVAL_MS = 5000;
  */
 const PARSER_COLD_PARSE_TIMEOUT_MS = 120000;
 
+/** Timestamp of last verified healthy response from parser (ms since epoch). */
+let lastSuccessfulContact = 0;
+
+/** Render free-tier spins down after 15m of inactivity; 13m window ensures safe margin. */
+const RENDER_INACTIVITY_LIMIT_MS = 13 * 60 * 1000;
+
+function markParserAwake() {
+  lastSuccessfulContact = Date.now();
+}
+
+function isParserLikelyAwake() {
+  return Date.now() - lastSuccessfulContact < RENDER_INACTIVITY_LIMIT_MS;
+}
+
 const parserClient = axios.create({
   baseURL: env.parserServiceUrl,
   maxContentLength: Infinity,
@@ -204,6 +218,7 @@ async function checkParserHealth() {
       jsonParseSucceeded &&
       bodyStatus === "healthy"
     ) {
+      markParserAwake();
       return { status: "healthy" };
     }
 
@@ -346,6 +361,10 @@ function isColdStartError(err) {
  * @returns {Promise<boolean>} `true` if the parser reported healthy in time.
  */
 async function waitForParserAwake() {
+  if (isParserLikelyAwake()) {
+    return true;
+  }
+
   const deadline = Date.now() + PARSER_WAKE_BUDGET_MS;
   let attempt = 0;
 
@@ -413,6 +432,7 @@ async function parseResume(file) {
         headers: form.getHeaders(),
         timeout: parseTimeout,
       });
+      markParserAwake();
       return data;
     } catch (err) {
       const isLastAttempt = attempt >= MAX_PARSE_ATTEMPTS - 1;
@@ -497,4 +517,10 @@ function normalizeParserError(err) {
   );
 }
 
-module.exports = { parseResume, checkParserHealth, waitForParserAwake };
+module.exports = {
+  parseResume,
+  checkParserHealth,
+  waitForParserAwake,
+  isParserLikelyAwake,
+  markParserAwake,
+};

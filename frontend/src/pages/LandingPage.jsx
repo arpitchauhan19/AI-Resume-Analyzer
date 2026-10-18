@@ -1,8 +1,10 @@
+import { useEffect } from "react";
 import Navbar from "../components/Navbar";
 import Hero from "../components/Hero";
 import Features from "../components/Features";
 import Footer from "../components/Footer";
 import useTheme from "../hooks/useTheme";
+import { warmUpBackend } from "../lib/api";
 
 /*
  * Landing page composition.
@@ -11,6 +13,11 @@ import useTheme from "../hooks/useTheme";
  */
 function LandingPage() {
   const { theme, toggleTheme } = useTheme();
+
+  // Pre-warm backend + parser as soon as visitor lands on the home page
+  useEffect(() => {
+    warmUpBackend();
+  }, []);
 
   return (
     <>

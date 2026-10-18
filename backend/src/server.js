@@ -1,6 +1,7 @@
 const app = require("./app");
 const env = require("./config/env");
 const connectDB = require("./config/db");
+const { waitForParserAwake, markParserAwake } = require("./services/parserService");
 
 let server;
 
@@ -16,6 +17,15 @@ function start() {
     console.error("[startup] MongoDB connection failed:", err.message);
     console.error("[startup] Continuing without a database connection.");
   });
+
+  // Kick off background wake of Python parser immediately on backend boot
+  waitForParserAwake()
+    .then((awake) => {
+      if (awake) markParserAwake();
+    })
+    .catch((err) => {
+      console.warn("[startup] Background parser wake attempt failed:", err.message || err);
+    });
 }
 
 // Graceful shutdown on termination signals.
