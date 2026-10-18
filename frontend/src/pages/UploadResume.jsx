@@ -9,6 +9,7 @@ import Button from "../components/Button";
 import { ArrowRightIcon, AlertIcon } from "../components/icons";
 import {
   uploadResume,
+  uploadResumeWithRetry,
   warmUpBackend,
   checkParserReadiness,
   getErrorMessage,
@@ -31,6 +32,7 @@ function UploadResume() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [retryStatus, setRetryStatus] = useState("");
 
   // Server readiness status: "checking" | "ready" | "warming"
   const [parserStatus, setParserStatus] = useState("checking");
@@ -80,6 +82,7 @@ function UploadResume() {
     setFile(selected);
     setError("");
     setProgress(0);
+    setRetryStatus("");
     // Picking a file is a strong signal an upload is imminent — nudge the parser
     // awake again in case it spun back down since page load.
     warmUpBackend();
@@ -89,6 +92,7 @@ function UploadResume() {
     setFile(null);
     setError("");
     setProgress(0);
+    setRetryStatus("");
   }
 
   async function handleAnalyze() {
@@ -98,9 +102,14 @@ function UploadResume() {
     setError("");
     setProgress(0);
     setElapsedSeconds(0);
+    setRetryStatus("");
 
     try {
-      const payload = await uploadResume(file, setProgress);
+      const payload = await uploadResumeWithRetry(
+        file,
+        setProgress,
+        (msg) => setRetryStatus(msg)
+      );
 
       // Hand the parsed resume + file name to the dashboard via router state.
       navigate("/dashboard", {
@@ -114,6 +123,7 @@ function UploadResume() {
       setError(getErrorMessage(err));
       setUploading(false);
       setProgress(0);
+      setRetryStatus("");
     }
   }
 
@@ -164,7 +174,9 @@ function UploadResume() {
                 <div className="upload__progress-head">
                   <span className="upload__spinner" aria-hidden="true" />
                   <span>
-                    {progress < 100
+                    {retryStatus
+                      ? retryStatus
+                      : progress < 100
                       ? `Uploading… ${progress}%`
                       : elapsedSeconds > 6
                       ? "Waking up AI Engine on Render (~30–60s cold start)…"

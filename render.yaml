@@ -1,0 +1,20 @@
+# Render Blueprint — single web service that serves the API + built React app (like PlaceTrack).
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: ai-resume-analyzer
+    runtime: node
+    plan: free
+    branch: main
+    buildCommand: npm run render-build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # URL of your deployed Python FastAPI Parser service on Render (e.g. https://python-resume-parser.onrender.com)
+      - key: PARSER_SERVICE_URL
+        sync: false
+      # Optional MongoDB connection string
+      - key: MONGODB_URI
+        sync: false

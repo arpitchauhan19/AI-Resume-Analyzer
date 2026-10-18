@@ -1,0 +1,15 @@
+{
+  "name": "ai-resume-analyzer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Resume Analyzer & ATS Scorer (Single-service Render build like PlaceTrack)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "render-build": "npm --prefix backend install --omit=dev && npm --prefix frontend install --include=dev && npm --prefix frontend run build",
+    "start": "npm --prefix backend start"
+  },
+  "license": "MIT"
+}

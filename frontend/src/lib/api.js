@@ -94,6 +94,50 @@ export async function uploadResume(file, onProgress) {
 }
 
 /**
+ * Upload a resume file with automatic retry for Render free-tier cold starts.
+ *
+ * If Render returns a temporary network/edge drop (ERR_NETWORK) or 502/503/504 while waking up,
+ * we patiently retry instead of throwing a false-positive fatal error.
+ *
+ * @param {File} file
+ * @param {(percent: number) => void} [onProgress]
+ * @param {(statusMessage: string) => void} [onStatus]
+ * @returns {Promise<object>}
+ */
+export async function uploadResumeWithRetry(file, onProgress, onStatus) {
+  const maxAttempts = 12;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      if (attempt > 1 && onStatus) {
+        onStatus(`Waking up server on Render (attempt ${attempt}/${maxAttempts})…`);
+      }
+      return await uploadResume(file, onProgress);
+    } catch (err) {
+      const isNetworkOrColdStart =
+        err.code === "ERR_NETWORK" ||
+        err.message?.includes("Network Error") ||
+        err.response?.status === 502 ||
+        err.response?.status === 503 ||
+        err.response?.status === 504 ||
+        (typeof err.response?.data?.message === "string" &&
+          err.response.data.message.toLowerCase().includes("waking up"));
+
+      if (isNetworkOrColdStart && attempt < maxAttempts) {
+        if (onStatus) {
+          onStatus(
+            `Server is waking up on Render (~45s free tier boot)… Reconnecting in 5s (attempt ${attempt}/${maxAttempts})`
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/**
  * Run the ATS analysis for a parsed resume against a job description.
  *
  * Calls the Express ATS engine (`POST /api/ats/analyze`) which returns the
@@ -133,7 +177,7 @@ export function getErrorMessage(err) {
       return data.message || data.error;
     }
     if (err.code === "ERR_NETWORK") {
-      return "Could not reach the server. Please make sure the backend is running and try again.";
+      return "Could not reach the server. The free-tier backend is currently waking up on Render (~45s). Please wait a few seconds and try again!";
     }
     return err.message || "Something went wrong while uploading your resume.";
   }
