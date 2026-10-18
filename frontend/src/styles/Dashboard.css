@@ -283,6 +283,19 @@
   line-height: 1.55;
 }
 
+.item-list__title {
+  font-weight: 700;
+  color: var(--text-strong);
+  margin-bottom: 3px;
+  font-size: 0.95rem;
+}
+
+.item-list__desc {
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
 .item-list__row::before {
   content: "";
   position: absolute;

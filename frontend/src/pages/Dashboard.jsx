@@ -28,6 +28,44 @@ function NotFound({ label = "Not found" }) {
   return <p className="not-found">{label}</p>;
 }
 
+function formatItemContent(text) {
+  if (typeof text !== "string") return text;
+
+  // Split on "Technologies:" or "Tech Stack:"
+  const techMatch = text.match(/\b(Technologies|Tech Stack|Tools):\s*/i);
+  if (techMatch && techMatch.index > 0 && techMatch.index < 90) {
+    const title = text.slice(0, techMatch.index).trim();
+    const rest = text.slice(techMatch.index).trim();
+    return (
+      <div>
+        <div className="item-list__title">{title}</div>
+        <div className="item-list__desc">{rest}</div>
+      </div>
+    );
+  }
+
+  // Split on " | "
+  const pipeIndex = text.indexOf(" | ");
+  if (pipeIndex > 0 && pipeIndex < 60) {
+    const afterPipe = text.slice(pipeIndex + 3);
+    const splitIndex = afterPipe.search(
+      /\b(Built|Developed|Created|Designed|Implemented|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d)\b/
+    );
+    if (splitIndex > 0) {
+      const title = text.slice(0, pipeIndex + 3 + splitIndex).trim();
+      const desc = afterPipe.slice(splitIndex).trim();
+      return (
+        <div>
+          <div className="item-list__title">{title}</div>
+          <div className="item-list__desc">{desc}</div>
+        </div>
+      );
+    }
+  }
+
+  return <div>{text}</div>;
+}
+
 /* Renders a list of free-text items, or a graceful fallback when empty. */
 function ItemList({ items }) {
   if (!items || items.length === 0) {
@@ -37,7 +75,7 @@ function ItemList({ items }) {
     <ul className="item-list">
       {items.map((item, i) => (
         <li className="item-list__row" key={`${item}-${i}`}>
-          {item}
+          {formatItemContent(item)}
         </li>
       ))}
     </ul>

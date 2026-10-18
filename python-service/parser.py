@@ -194,12 +194,14 @@ _DEGREE_RE = re.compile(
     r"b\.?\s?sc|m\.?\s?sc|b\.?\s?tech|m\.?\s?tech|b\.?\s?e|m\.?\s?e|"
     r"b\.?\s?a|m\.?\s?a|b\.?\s?com|m\.?\s?com|bachelor|master|masters|"
     r"ph\.?\s?d|mba|bba|bca|mca|b\.?\s?ed|diploma|"
-    r"h\.?s\.?c|s\.?s\.?c|higher secondary|senior secondary|secondary"
+    r"h\.?s\.?c|s\.?s\.?c|higher secondary|senior secondary|secondary|"
+    r"high school|intermediate|matriculation|cbse|icse|state board|"
+    r"undergraduate|postgraduate|b\.?des|m\.?des|b\.?arch|ll\.?b|ll\.?m"
     r")\b",
     re.IGNORECASE,
 )
 _TITLE_SEPARATOR_RE = re.compile(r"\s[-\u2013\u2014|]\s")  # " - ", " – ", " — ", " | "
-_BULLET_CHARS = "-•*·●▪◦‣"
+_BULLET_CHARS = "-•*·●▪◦‣►✔✓\u2022\u2023\u2043\u25aa\u25ab\u25e6\u00b7"
 _BULLET_RE = re.compile(r"^[\s" + re.escape(_BULLET_CHARS) + r"]+")
 
 
@@ -261,7 +263,7 @@ def extract_phone(text: str) -> Optional[str]:
     return None
 
 
-def _looks_like_name_line(line: str) -> bool:
+def _looks_like_name_line(line: str, allow_single: bool = False) -> bool:
     """Heuristic test for "is this line plausibly a person's full name?".
 
     Rejects lines that contain digits/emails, are too long, are the wrong
@@ -276,7 +278,8 @@ def _looks_like_name_line(line: str) -> bool:
         return False
 
     tokens = line.split()
-    if not (2 <= len(tokens) <= 4):
+    min_tokens = 1 if allow_single else 2
+    if not (min_tokens <= len(tokens) <= 4):
         return False
 
     low_tokens = [t.lower().strip(".,") for t in tokens]
@@ -336,17 +339,17 @@ def extract_name(text: str) -> Optional[str]:
 
     person_lower = {p.lower() for p in person_ents}
 
-    def acceptable(line: str) -> bool:
-        return _looks_like_name_line(line) and line.lower() not in gpe_org
+    def acceptable(line: str, allow_single: bool = False) -> bool:
+        return _looks_like_name_line(line, allow_single=allow_single) and line.lower() not in gpe_org
 
     # 2. Header line confirmed as a PERSON by spaCy.
-    for line in header:
-        if acceptable(line) and line.lower() in person_lower:
+    for i, line in enumerate(header):
+        if acceptable(line, allow_single=(i == 0)) and line.lower() in person_lower:
             return _clean_name(line)
 
     # 3. First acceptable header line (positional bias: names are at the top).
-    for line in header:
-        if acceptable(line):
+    for i, line in enumerate(header):
+        if acceptable(line, allow_single=(i == 0)):
             return _clean_name(line)
 
     # 4. Any spaCy PERSON entity that is not a location/org and looks like a name.
@@ -380,8 +383,16 @@ def _match_heading(line: str) -> Optional[str]:
     if not raw:
         return None
 
+    # An inline field (e.g. "Technologies: Python, Node" or "Skills: React") is NOT a section heading
+    if re.search(r":\s*\S", raw):
+        return None
+
+    # Section headings do not contain commas
+    if "," in raw:
+        return None
+
     # Strip leading bullets / numbering (e.g. "1.", "-", "•") and trailing colon.
-    cleaned = re.sub(r"^[\s\d\.\)\-•*·●▪◦]+", "", raw).strip().rstrip(":").strip()
+    cleaned = re.sub(r"^[\s\d\.\)\-•*·●▪◦‣]+", "", raw).strip().rstrip(":").strip()
     low = re.sub(r"[^a-z ]", " ", cleaned.lower())
     words = low.split()
     if not words or len(words) > 5:
@@ -508,31 +519,37 @@ def extract_education(sections: Dict[str, str]) -> List[str]:
     return _finalize(entries)
 
 
+def _is_experience_header(clean: str, was_bullet: bool) -> bool:
+    if was_bullet:
+        return False
+    if _DATE_LINE_RE.match(clean):
+        return False
+
+    words = {w.lower().rstrip(":,.-") for w in clean.split()}
+    is_title = bool(words & _TITLE_WORDS)
+    has_date = bool(_YEAR_RE.search(clean) or _PRESENT_RE.search(clean))
+    has_sep = bool(re.search(r"\s([-\u2013\u2014|]|at)\s", clean, re.IGNORECASE))
+
+    return is_title or (has_sep and has_date)
+
+
 def extract_experience(sections: Dict[str, str]) -> List[str]:
     """Group the experience block into one item per role.
 
-    A non-bullet line carrying a date/year or "Present" anchors a role. Bullet
-    points and description lines attach to the current role. A new role starts
-    on another dated header only once the current entry already has a date — so
-    a role-line, company-line and date-line describing the *same* job stay
-    together.
+    A job title/company line or a dated role header anchors a role.
+    Bullet points and descriptions attach to the current role.
     """
 
     lines = _iter_clean_lines(sections.get("experience", ""))
     entries: List[str] = []
     current: List[str] = []
-    current_has_date = False
 
     for clean, was_bullet in lines:
-        has_date = bool(_YEAR_RE.search(clean) or _PRESENT_RE.search(clean))
-        is_header = has_date and not was_bullet
-        if current and is_header and current_has_date:
+        if current and _is_experience_header(clean, was_bullet) and len(current) >= 1:
             entries.append(" ".join(current))
             current = [clean]
-            current_has_date = True
         else:
             current.append(clean)
-            current_has_date = current_has_date or has_date
 
     if current:
         entries.append(" ".join(current))
@@ -543,25 +560,46 @@ def _ends_sentence(text: str) -> bool:
     return text.rstrip().endswith((".", "!", "?"))
 
 
-# Lines that start with an action verb are descriptions, not project titles
-# ("Built a parser" must never become its own project).
-_PROJECT_VERB_RE = re.compile(
-    r"^(built|build|implemented|developed|created|designed|deployed|added|"
-    r"integrated|worked|used|led|managed|improved|optimized|configured|"
-    r"wrote|handled|enabled|automated|refactored|engineered|"
-    r"architected|delivered|launched|maintained|tested|fixed|resolved|"
-    r"collaborated|contributed|achieved|increased|reduced|migrated|"
-    r"tracked|parsed|scored|extracted)\b",
+_ACTION_VERBS = {
+    "built", "build", "implemented", "implement", "developed", "develop",
+    "created", "create", "designed", "design", "deployed", "deploy", "added",
+    "integrated", "integrate", "worked", "used", "using", "led", "managed",
+    "improved", "improve", "optimized", "optimize", "configured", "configure",
+    "wrote", "write", "handled", "handle", "enabled", "enable", "automated",
+    "automate", "refactored", "refactor", "engineered", "engineer",
+    "architected", "architect", "delivered", "deliver", "launched", "launch",
+    "maintained", "maintain", "tested", "test", "fixed", "fix", "resolved",
+    "collaborated", "contributed", "contribute", "achieved", "increased",
+    "reduced", "migrated", "migrate", "tracked", "parsed", "scored",
+    "extracted", "spearheaded", "utilized", "utilize", "leveraged", "leverage",
+    "assisted", "assist", "trained", "train", "evaluated", "evaluate",
+    "conducted", "conduct", "researched", "research", "formulated", "orchestrated",
+    "supervised", "directed", "facilitated", "generated", "produced",
+}
+
+_ATTR_PREFIX_RE = re.compile(
+    r"^(technologies|tech stack|tools|tools used|environment|stack|role|duration|key features|features|overview|description|github|link|url|frontend|backend|database)\s*:",
+    re.IGNORECASE,
+)
+
+_NUMBERED_HEADER_RE = re.compile(
+    r"^(project\s*\d+[:\.\-]?|\(?\d{1,2}[\.\)\:\-]\s+)",
+    re.IGNORECASE,
+)
+
+_DATE_LINE_RE = re.compile(
+    r"^([A-Za-z]{3,9}\.?\s+)?(19|20)\d{2}\s*[-\u2013\u2014to ]+\s*([A-Za-z]{3,9}\.?\s+)?((19|20)\d{2}|present|current|ongoing)\b",
+    re.IGNORECASE,
+)
+
+_DESC_INTRO_RE = re.compile(
+    r"^(a|an|the|this)\s+(web|mobile|desktop|full-stack|fullstack|cross-platform|ai|ml|nlp|cloud|distributed|microservice|real-time|responsive|platform|application|app|system|website|portal|service|tool|dashboard|solution|project|software|bot|engine|framework|pipeline|model)\b",
     re.IGNORECASE,
 )
 
 
 def _looks_like_tech_stack(text: str) -> bool:
-    """True for a comma-separated skill list sitting under a project title.
-
-    ``Title | React, Node`` is a header (has a title separator), not a stack
-    row. Only a bare comma list such as ``React, Express, FastAPI`` counts.
-    """
+    """True for a comma-separated skill list sitting under a project title."""
 
     if _TITLE_SEPARATOR_RE.search(text):
         return False
@@ -571,57 +609,66 @@ def _looks_like_tech_stack(text: str) -> bool:
     return all(1 <= len(chunk.split()) <= 3 for chunk in chunks)
 
 
-def _is_project_header(clean: str, was_bullet: bool) -> bool:
-    """Decide whether a line starts a *new* project rather than describing one.
+def _is_project_header(clean: str, was_bullet: bool, current_is_bulleted: bool) -> bool:
+    """Decide whether a line starts a new project rather than describing one."""
 
-    Real resumes almost always look like::
+    if not clean:
+        return False
+    if _NUMBERED_HEADER_RE.match(clean):
+        return True
+    if _ATTR_PREFIX_RE.match(clean):
+        return False
+    if _DATE_LINE_RE.match(clean):
+        return False
+    if _DESC_INTRO_RE.match(clean):
+        return False
 
-        Title | stack
-        • description bullet
-        • another bullet
-
-    Treating every bullet as a new project is what produced 7–9 fake entries
-    from 2 real ones. Description bullets therefore attach to the current
-    project. A new project starts only on a title-like line.
-    """
-
-    if _looks_like_tech_stack(clean) or _PROJECT_VERB_RE.match(clean):
+    first_word = clean.split()[0].lower().rstrip(":,.-") if clean.split() else ""
+    if first_word in _ACTION_VERBS:
+        return False
+    if _looks_like_tech_stack(clean):
         return False
 
     has_separator = bool(_TITLE_SEPARATOR_RE.search(clean))
+    has_bracket_stack = bool(re.search(r"\[[\w\s,./#+-]+\]|\([\w\s,./#+-]+\)", clean))
     starts_upper = clean[:1].isupper()
     words = clean.split()
-    short_title = (
-        starts_upper
-        and not _ends_sentence(clean)
-        and 1 <= len(words) <= 8
-    )
+    ends_sentence = clean.rstrip().endswith((".", "!", "?"))
+
+    # If the current project started without a bullet, sub-bullets inside it attach as descriptions
+    if was_bullet and not current_is_bulleted and not (has_separator or has_bracket_stack):
+        return False
 
     if was_bullet:
-        # "• PlaceTrack — placement tracker" is a titled project.
-        # "• Built the upload pipeline" is a description of the current one.
-        return has_separator and starts_upper and len(words) <= 16
+        # A bulleted title starts a new project if it has separator/brackets or is a short title
+        is_bullet_title = starts_upper and not ends_sentence and 1 <= len(words) <= 8
+        return has_separator or has_bracket_stack or is_bullet_title
 
-    return has_separator or short_title
+    short_title = starts_upper and not ends_sentence and 1 <= len(words) <= 8
+    return has_separator or has_bracket_stack or short_title
 
 
 def extract_projects(sections: Dict[str, str]) -> List[str]:
     """Group the projects block into one item per real project.
 
-    A new project starts only on a title signal — ``Title | stack``,
-    ``Title - description``, or a short Title-Case header. Bullet points and
-    wrapped description / tech-stack lines attach to the current project.
+    Handles numbered lists (1. Project), bulleted projects, Title | Stack lines,
+    and brackets/parenthesized stacks, while grouping description bullets and
+    attribute lines into the project they belong to.
     """
 
     lines = _iter_clean_lines(sections.get("projects", ""))
     entries: List[str] = []
     current: List[str] = []
+    current_is_bulleted = False
 
     for clean, was_bullet in lines:
-        if current and _is_project_header(clean, was_bullet):
+        if current and _is_project_header(clean, was_bullet, current_is_bulleted):
             entries.append(" ".join(current))
             current = [clean]
+            current_is_bulleted = was_bullet
         else:
+            if not current:
+                current_is_bulleted = was_bullet
             current.append(clean)
 
     if current:
